@@ -26,8 +26,8 @@
  * failure to an empty array, so the distinction only exists here.
  */
 
-/** Fetch a URL. Resolves to {kind: 'ok'|'error'|'http', …}; never rejects. */
-function get(url) {
+/** One request. Resolves to {kind: 'ok'|'error'|'http', …}; never rejects. */
+function fetchOnce(url) {
     return fetchv2(url).then(function (res) {
         // "Invalid URL" arrives as a String, not a response object, so reading
         // .status off it yields undefined and would sail past a status check.
@@ -56,6 +56,21 @@ function get(url) {
         }
 
         return { kind: 'ok', status: status, body: body };
+    });
+}
+
+/**
+ * One request, retried once if the connection dropped.
+ *
+ * A transport fault is the one failure worth a second ask: it means the request
+ * never reached the provider, which on a mobile connection is routinely a
+ * momentary blip rather than an outage. A status code is NOT retried — that is
+ * an answer, and re-asking for an answer already in hand only doubles the wait.
+ */
+function get(url) {
+    return fetchOnce(url).then(function (result) {
+        if (result.kind !== 'error') return result;
+        return fetchOnce(url);
     });
 }
 

@@ -45,6 +45,11 @@ class Response {
 }
 
 function makeFetchV2(routes, log, calls) {
+    // Per-URL request counts, so a fixture can describe a connection that
+    // fails once and then succeeds — the shape a real flaky network produces
+    // and the only way to test a retry honestly.
+    const seen = {};
+
     return function fetchv2(url, headers = {}, method = 'GET', body = null, redirect = true, encoding) {
         return new Promise(function (resolve) {
             log.push('REQ ' + method + ' ' + url);
@@ -54,13 +59,20 @@ function makeFetchV2(routes, log, calls) {
                     body: body, redirect: redirect, encoding: encoding
                 });
             }
+            seen[url] = (seen[url] || 0) + 1;
             const route = routes[url];
             if (!route) {
                 // Not what Swift does, but a missing fixture should fail loudly
                 // in tests rather than quietly exercise a fallback branch.
                 return resolve(new Response({ error: 'no fixture for ' + url }));
             }
-            if (route.transportError) {
+            if (route.hang) {
+                // A request that never answers. Mirrors the app's own
+                // "Timeout for extractEpisodes" and lets a test assert that an
+                // entry point resolves without waiting for the network.
+                return;
+            }
+            if (route.transportError && (!route.failFirst || seen[url] <= route.failFirst)) {
                 return resolve(new Response({ error: route.transportError }));
             }
             if (route.invalidUrl) {

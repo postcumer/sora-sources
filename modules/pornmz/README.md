@@ -127,6 +127,19 @@ someone else's server.
 `extractEpisodes` concurrently on the same URL and then calls `extractStreamUrl` on it
 again, so the in-flight promise is memoised. The cache TTL is **5 minutes**, up from 60 s.
 
+**`extractEpisodes` does not wait for the page at all.** The episode list is the URL the
+host is already holding — a post is one standalone video — so it resolves immediately and
+starts the page fetch without awaiting it. This was a real failure, not a theory: the app
+logged `Timeout for extractEpisodes` twice on videos that then played perfectly well. An
+entry point that cannot fail should not sit behind the slowest request in the module.
+
+**A dropped connection is retried once.** `get()` asks a second time when `fetchv2`
+resolves with a transport fault, which is the one failure that means the request never
+reached the provider — the app logged `Network error in fetchV2NativeFunction: The
+network connection was lost` mid-search, and the host rendered that as an empty result
+list. A status code is *not* retried: 403 and 429 will answer identically, and re-asking
+only doubles the wait. One retry, never a loop.
+
 That TTL is a deliberate trade against §25 (do not serve tokenised URLs stale), and it was
 resolved with evidence rather than a guess: a playlist URL captured **over an hour**
 earlier still returned **200** when re-checked, so the token is far more durable than it

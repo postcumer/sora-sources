@@ -53,7 +53,7 @@ var META_REPEATS = {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch a URL. Resolves to {kind:'ok'|'error'|'http', …} and never rejects.
+ * One request. Resolves to {kind:'ok'|'error'|'http', …} and never rejects.
  *
  * fetchv2's failure shapes, all of which RESOLVE (setupFetchV2 in
  * JavaScriptCore+Extensions.swift):
@@ -61,7 +61,7 @@ var META_REPEATS = {
  *   - a transport fault -> {error: …} with no status key
  *   - an oversized body -> 200-shaped with an empty body
  */
-function get(url) {
+function fetchOnce(url) {
     return fetchv2(url).then(function (res) {
         // Checked first: res.status on a String is undefined, so a status check
         // alone would let this through and read as a success.
@@ -88,6 +88,24 @@ function get(url) {
         }
 
         return { kind: "ok", status: status, body: body };
+    });
+}
+
+/**
+ * One request, retried once if the connection dropped.
+ *
+ * A transport fault is the one failure that is genuinely worth a second ask:
+ * the app logged "The network connection was lost" mid-search, and the same
+ * request routinely succeeds immediately afterwards. A status code is not
+ * retried — that is an answer, and asking again for an answer already in hand
+ * only doubles the wait on a server that is already slow (§49).
+ */
+function get(url) {
+    return fetchOnce(url).then(function (result) {
+        if (result.kind !== "error") {
+            return result;
+        }
+        return fetchOnce(url);
     });
 }
 
@@ -302,14 +320,17 @@ function extractDetails(url) {
  * Episodes: one post is one standalone video, so the honest model is a single
  * episode. The host discards title and duration in async mode, so only the two
  * fields it actually reads are emitted.
+ *
+ * Nothing here comes from the page. The episode *is* the URL the host is
+ * already holding, so awaiting a fetch only to test that the page existed put
+ * a network round-trip in front of an entry point that cannot fail — and on an
+ * origin this slow that showed up in the app as a real "Timeout for
+ * extractEpisodes" on a video that then played perfectly well. The page is
+ * still fetched, just not awaited, so extractStreamUrl finds it warm.
  */
 function extractEpisodes(url) {
-    return loadPage(url).then(function (html) {
-        if (!html) {
-            return "[]";
-        }
-        return JSON.stringify([{ number: 1, href: url }]);
-    });
+    loadPage(url);
+    return Promise.resolve(JSON.stringify([{ number: 1, href: url }]));
 }
 
 /**

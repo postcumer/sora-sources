@@ -135,6 +135,25 @@ test('search: a transport failure is logged as such, not as an HTTP error', asyn
     test.includes(ctx.log.join('\n'), 'transport', 'transport failure distinguishable in the log');
 });
 
+test('search: a dropped connection is retried before giving up', async () => {
+    // The shipped copy of the shared helper. The app logged "The network
+    // connection was lost" mid-search, which the host turned into an empty
+    // result list and its own "Failed to process items" error. One more ask
+    // turns a momentary blip into results.
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=blip&per_page=20&_embed=wp:featuredmedia';
+    const ctx = load({
+        [url]: {
+            transportError: 'The network connection was lost.', failFirst: 1,
+            status: 200,
+            body: JSON.stringify([{ link: PAGE_URL, title: { rendered: 'Recovered' } }])
+        }
+    });
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('blip'));
+    test.equal(parsed.items.length, 1, 'the retry produced a result');
+    test.equal(parsed.items[0].title, 'Recovered', 'and it is the right one');
+    test.equal(requestCount(ctx), 2, 'at the cost of one extra request');
+});
+
 test('search: a 200 with an HTML body is reported as malformed, not as results', async () => {
     // A bot-check or maintenance page served with status 200. Treating it as
     // data is how a module ends up reporting a provider outage as "no matches".
@@ -224,8 +243,39 @@ test('a page fetch failure degrades to empty rather than rejecting', async () =>
     test.true(details.ok, 'details still parses');
     test.equal(details.items.length, 0, 'no invented metadata');
     test.true(episodes.ok, 'episodes still parse');
-    test.equal(episodes.episodes.length, 0, 'no invented episodes');
     test.includes(ctx.log.join('\n'), 'HTTP 404', 'the status was logged');
+});
+
+test('episodes resolve without waiting for the page at all', async () => {
+    // The app logged "Timeout for extractEpisodes" twice on videos that then
+    // played fine. The episode is the URL the host already holds, so awaiting
+    // the page here bought nothing and cost the whole page timeout. A request
+    // that never answers must not be able to stall this entry point.
+    const url = 'https://pornmz.com/video/id=pm-hang';
+    const ctx = load({ [url]: { hang: true } });
+
+    const resolved = await Promise.race([
+        ctx.context.extractEpisodes(url).then(r => r),
+        new Promise((_, reject) => setTimeout(
+            () => reject(new Error('extractEpisodes waited for the page')), 250))
+    ]);
+
+    const parsed = h.hostParseEpisodes(resolved);
+    test.equal(parsed.episodes.length, 1, 'the episode is there anyway');
+    test.equal(parsed.episodes[0].href, url, 'pointing at the page the host asked about');
+    test.equal(requestCount(ctx), 1, 'the page is still being fetched, in the background');
+});
+
+test('episodes do not wait for a page that never answers, but details still do', async () => {
+    // The two entry points are deliberately not symmetrical. Details genuinely
+    // needs the page, so it keeps the timeout; episodes never needed it.
+    const url = 'https://pornmz.com/video/id=pm-hang2';
+    const ctx = load({ [url]: { hang: true } });
+    const raced = await Promise.race([
+        ctx.context.extractDetails(url).then(() => 'resolved'),
+        new Promise(r => setTimeout(() => r('still waiting'), 250))
+    ]);
+    test.equal(raced, 'still waiting', 'details is correctly waiting on the page');
 });
 
 // ---------------------------------------------------------------------------
@@ -345,7 +395,7 @@ test('an empty page body yields an empty result, not a crash', async () => {
     test.true(details.ok, 'still parses');
     test.equal(details.items.length, 0, 'no metadata invented');
     const episodes = h.hostParseEpisodes(await ctx.context.extractEpisodes(url));
-    test.equal(episodes.episodes.length, 0, 'no episodes invented');
+    test.equal(episodes.episodes.length, 1, 'the episode is the URL, and needs no page');
 });
 
 test('search: only the relation the module reads is embedded', async () => {

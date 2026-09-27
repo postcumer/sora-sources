@@ -41,6 +41,39 @@ test('transport error is distinguishable from an HTTP error', async () => {
     test.equal(ctx.describe(res), 'transport', 'log line names the reason');
 });
 
+test('a dropped connection is asked once more', async () => {
+    // A transport fault means the request never reached the provider, which on a
+    // mobile connection is usually momentary. The app logged "The network
+    // connection was lost" mid-search, so the second ask is what turns that into
+    // results instead of an empty list.
+    const ctx = withRoutes({
+        'https://p.test/blip': { transportError: 'The network connection was lost.', failFirst: 1, body: '{"ok":1}' }
+    });
+    const res = await ctx.get('https://p.test/blip');
+    test.equal(res.kind, 'ok', 'the retry succeeded');
+    test.equal(ctx.calls.length, 2, 'and it cost exactly one extra request');
+});
+
+test('a status code is never retried', async () => {
+    // Re-asking for an answer already in hand only doubles the wait on a slow
+    // origin, and 403/429 are conditions that will answer identically.
+    for (const status of [403, 429, 500]) {
+        const ctx = withRoutes({ ['https://p.test/s' + status]: { status: status, body: 'no' } });
+        const res = await ctx.get('https://p.test/s' + status);
+        test.equal(res.kind, 'http', status + ' stays an http result');
+        test.equal(ctx.calls.length, 1, status + ' cost exactly one request');
+    }
+});
+
+test('a connection that stays down is retried once and then gives up', async () => {
+    // One retry, not a loop. An unbounded retry against a dead origin is a
+    // hang, which is worse than an empty result.
+    const ctx = withRoutes({ 'https://p.test/gone': { transportError: 'offline' } });
+    const res = await ctx.get('https://p.test/gone');
+    test.equal(res.kind, 'error', 'still reported as a failure');
+    test.equal(ctx.calls.length, 2, 'one retry, then stop');
+});
+
 test('"Invalid URL" arrives as a bare string, not an object', async () => {
     // setupFetchV2 resolves this with resolve.call(withArguments: ["Invalid URL"])
     // — a String. Reading .status off it yields undefined and would sail past a
