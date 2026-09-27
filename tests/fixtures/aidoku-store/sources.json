@@ -1,0 +1,75 @@
+{
+  "name": "Aidoku Sources",
+  "sources": [
+    {
+      "id": "en.coomer-st",
+      "name": "Coomer",
+      "version": 4,
+      "iconURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/sources/coomer-st/res/icon.png",
+      "downloadURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/dist/coomer-st.aix",
+      "languages": ["en"],
+      "contentRating": 2,
+      "baseURL": "https://coomer.st"
+    },
+    {
+      "id": "en.e-hentai",
+      "name": "E-Hentai",
+      "version": 4,
+      "iconURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/sources/e-hentai/res/icon.png",
+      "downloadURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/dist/e-hentai.aix",
+      "languages": ["en"],
+      "contentRating": 2,
+      "baseURL": "https://e-hentai.org"
+    },
+    {
+      "id": "en.gelbooru",
+      "name": "Gelbooru",
+      "version": 3,
+      "iconURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/sources/gelbooru/res/icon.png",
+      "downloadURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/dist/gelbooru.aix",
+      "languages": ["en"],
+      "contentRating": 2,
+      "baseURL": "https://gelbooru.com"
+    },
+    {
+      "id": "en.hentai-cosplay-xxx",
+      "name": "Hentai Cosplay",
+      "version": 4,
+      "iconURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/sources/hentai-cosplay-xxx/res/icon.png",
+      "downloadURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/dist/hentai-cosplay-xxx.aix",
+      "languages": ["en"],
+      "contentRating": 2,
+      "baseURL": "https://hentai-cosplay-xxx.com"
+    },
+    {
+      "id": "en.hentai20",
+      "name": "Hentai20",
+      "version": 4,
+      "iconURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/sources/hentai20/res/icon.png",
+      "downloadURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/dist/hentai20.aix",
+      "languages": ["en"],
+      "contentRating": 2,
+      "baseURL": "https://hentai20.io"
+    },
+    {
+      "id": "en.hentaigamecg",
+      "name": "HGCG",
+      "version": 3,
+      "iconURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/sources/hentaigamecg/res/icon.png",
+      "downloadURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/dist/hentaigamecg.aix",
+      "languages": ["en"],
+      "contentRating": 2,
+      "baseURL": "https://hentaigamecg.com"
+    },
+    {
+      "id": "en.manhwa18",
+      "name": "Manhwa18",
+      "version": 4,
+      "iconURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/sources/manhwa18/res/icon.png",
+      "downloadURL": "https://raw.githubusercontent.com/postcumer/aidoku-sources/main/dist/manhwa18.aix",
+      "languages": ["en"],
+      "contentRating": 2,
+      "baseURL": "https://manhwa18.cc"
+    }
+  ]
+}

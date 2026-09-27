@@ -36,6 +36,8 @@ anymex/<source>.js
 tests/
     harness.js      the Sora runtime, reproduced closely enough to catch real bugs
     anymex-harness.js  the same for the AnymeX runtime
+    aidoku-harness.js  Mangayomi's Aidoku catalogue parser, transcribed from
+                    the app, so a foreign catalogue can be checked offline
     fixtures/       recorded provider responses; the suite never touches the network
 shared/
     net.js          the fetchv2 normaliser: the canonical, separately tested copy
@@ -151,6 +153,11 @@ empty result set, a post with no thumbnail, and a page publishing no stream.
   `index.json` catalogue, so it installs by repository URL as well as by paste. One file covers
   every platform, iOS included — the contract is identical, and a per-platform copy would install
   as a *separate* source rather than a variant.
+- **The seven Aidoku sources in [`postcumer/aidoku-sources`](https://github.com/postcumer/aidoku-sources)**
+  — usable in Mangayomi **without being ported**. It ships a native wasmi runner for `.aix`
+  WebAssembly packages, and the catalogue that repo publishes is already the format the app
+  parses, so adding the repository URL is the entire install. Traced link by link in the app's
+  source and pinned by tests: [`AIDOKU.md`](AIDOKU.md).
 - **Luna** — paused. The module runs there, but two host-side gaps (§0.1) mean it is not a
   target.
 - **hanime.tv, sxyprn.com, pornhub.com** — assessed, not built, and why:
