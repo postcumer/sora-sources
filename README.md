@@ -1,16 +1,21 @@
-# Sora modules
+# Modules for Luna and Sora
 
-JavaScript modules for [Sora](https://github.com/cranci1/Sora) (the iOS/macOS media player
-published as *Sulfur*). A module teaches Sora how to search a provider, describe a title, list
-its episodes, and resolve an episode to a playable stream.
+JavaScript modules for [Luna](https://github.com/cranci1/Luna) and
+[Sora](https://github.com/cranci1/Sora). A module teaches the app how to search a provider,
+describe a title, list its episodes, and resolve an episode to a playable stream.
 
-These are modules **for** Sora's module engine. They are not a scraping framework: there is no
-`UniversalScraperEngine`, no provider factory, no abstract media layer, and no shared runtime
-beyond the single `fetchv2` normaliser.
+**Luna is the primary target; Sora is supported too.** Luna's video path runs on SoraCore —
+the same engine Sora uses — so one module serves both. Their differences are documented in
+[`COMPATIBILITY.md`](COMPATIBILITY.md) §0. (Luna also ships a separate `Kanzen` engine for
+manga/webtoon; it uses `extractChapters`/`extractImages` and is unrelated to these modules.)
+
+These are modules **for** the host's module engine. They are not a scraping framework: there
+is no `UniversalScraperEngine`, no provider factory, no abstract media layer, and no shared
+runtime beyond the single `fetchv2` normaliser.
 
 **Read [`COMPATIBILITY.md`](COMPATIBILITY.md) first.** It is the module contract, derived from
-the Sora and SoraCore source rather than from community examples, and it is what every module
-here is written against.
+the Sora, SoraCore and Luna source rather than from community examples, and it is what every
+module here is written against.
 
 ---
 
@@ -92,6 +97,10 @@ The constraints these modules are written to, and why the short answer is "no":
 - **No personal cookies, tokens, or credentials** — not in code, not in logs, not in fixtures.
 - **No invented metadata.** A field the provider does not state is omitted, not guessed. An
   "HD" badge is not "1080p".
+- **Always send headers with a source.** Both hosts fall back to the module's own `baseUrl` as
+  the `Referer`, and a third-party CDN will often reject that with a 403. A bare URL is the
+  single most common reason a module appears to work and then plays nothing — see
+  `COMPATIBILITY.md` §6.1.
 - **No caching of resolved media URLs.** They are tokenised and expire.
 - **Adapters stay inside one provider.** A failure in one module cannot affect another, and
   there is no `if (site === …)` chain.

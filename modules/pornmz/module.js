@@ -300,19 +300,49 @@ function extractEpisodes(url) {
 }
 
 /**
+ * Headers for the playlist request.
+ *
+ * Both hosts default the Referer to the module's own baseUrl when a source
+ * carries no headers (Sora: CustomPlayer.swift, "Referer"/"Origin" = baseUrl;
+ * Luna: MediaDetailView.swift, "Referer"/"Origin" = service.baseUrl). The
+ * playlist is served from a different host entirely — Twitter's CDN — and that
+ * CDN answers **403 Forbidden** to a pornmz.com referer while serving the same
+ * URL fine with a referer of its own origin. So the referer has to travel with
+ * the source, and the host has to be told.
+ *
+ * The value is derived from the playlist URL rather than hardcoded, so this
+ * keeps working if the provider moves the video to a different CDN.
+ */
+function streamHeaders(streamUrl) {
+    var origin = /^(https?:\/\/[^\/?#]+)/i.exec(streamUrl);
+    return { "Referer": origin ? origin[1] : BASE_URL };
+}
+
+/**
  * The playable HLS playlist, straight from the page's VideoObject contentUrl.
  *
- * An empty string when the page publishes no contentUrl. The host then reports
- * no playable source, which is the truth — falling back to the iframe player
- * would mean scraping a third-party embed for a URL that may not exist, and
- * reporting success when there is nothing to play (§31).
+ * Returned as a `streams` array of source objects rather than a bare URL,
+ * because a bare URL carries no headers and would draw the host's pornmz.com
+ * referer, which the CDN rejects.
+ *
+ * An empty list when the page publishes no contentUrl. The host then reports no
+ * playable source, which is the truth — falling back to the iframe player would
+ * mean scraping a third-party embed for a URL that may not exist, and reporting
+ * success when there is nothing to play (§31).
  */
 function extractStreamUrl(url) {
     return loadPage(url).then(function (html) {
-        var stream = html ? metaContent(html, "contentUrl") : null;
-        if (!stream) {
+        var contentUrl = html ? metaContent(html, "contentUrl") : null;
+        if (!contentUrl) {
             console.log("pornmz: no contentUrl published for " + url);
+            return JSON.stringify({ streams: [] });
         }
-        return JSON.stringify({ stream: stream || "" });
+        return JSON.stringify({
+            streams: [{
+                streamUrl: contentUrl,
+                title: "HLS",
+                headers: streamHeaders(contentUrl)
+            }]
+        });
     });
 }

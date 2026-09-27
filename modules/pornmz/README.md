@@ -1,6 +1,7 @@
 # pornmz
 
-A Sora module for [pornmz.com](https://pornmz.com).
+A module for [pornmz.com](https://pornmz.com), for [Luna](https://github.com/cranci1/Luna) and
+[Sora](https://github.com/cranci1/Sora).
 
 ## What it does
 
@@ -12,6 +13,40 @@ A Sora module for [pornmz.com](https://pornmz.com).
 | Quality | Up to 1080p (measured — see below) |
 | Auth | None. No keys, cookies or tokens anywhere in the module. |
 | asyncJS / streamAsyncJS | `true` / `true` |
+
+## The one bug worth reading about
+
+`extractStreamUrl` does **not** return a bare URL. It returns a `sources` object carrying a
+`Referer`, and the reason is a real failure that looked like nothing at all.
+
+The playlist is served from **Twitter's CDN**, not from the provider's domain. Both hosts
+default the `Referer` to the module's own `baseUrl` when a source carries no headers — and
+`video.twimg.com` answers:
+
+| Request | Result |
+|---|---|
+| `Referer: https://pornmz.com` | **403 Forbidden** |
+| `Referer: https://video.twimg.com` | 200 |
+| no `Referer` at all | 200 |
+| `Referer: https://twitter.com` | 200 |
+| Chrome desktop User-Agent, no referer | 200 |
+| `Origin: https://pornmz.com` | 200 |
+
+So the `Referer` alone decides it. In the app this presents as a module that works perfectly —
+search results, thumbnails, the details page, a play button — and then plays nothing, showing
+a crossed-out play button. The UI never hints at a header.
+
+The fix is to derive the referrer from the playlist URL's own origin rather than hardcoding
+`video.twimg.com`, so a CDN change cannot silently reintroduce the failure:
+
+```js
+var origin = /^(https?:\/\/[^\/?#]+)/i.exec(streamUrl);
+return { "Referer": origin ? origin[1] : BASE_URL };
+```
+
+Sora *replaces* its header set with whatever the module supplies; Luna *merges* the module's
+headers over its own defaults. The same source object is correct on both — see
+`../../COMPATIBILITY.md` §0.2 and §6.1.
 
 ## Endpoints
 
@@ -62,6 +97,12 @@ Three things about this shape are worth knowing before changing the parser:
    `META_REPEATS` records which properties are single-valued, and `metaContent`
    refuses (returns nothing and logs) if a single-valued property ever appears
    more than once — a wrong stream that looks valid is worse than no stream.
+
+The published playlist is a **demuxed A/V master**: three `#EXT-X-MEDIA` audio renditions
+(`audio-32000`, `audio-64000`, `audio-128000`) alongside four `EXT-X-STREAM-INF` video
+variants, wired together by `AUDIO=` group references, with root-relative variant URIs. Both
+hosts' players follow this without help, so the module passes the master through untouched
+rather than trying to pick or pin a variant.
 
 ## Quality
 

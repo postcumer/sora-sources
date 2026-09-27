@@ -4,9 +4,47 @@ Derived by reading the source of:
 
 - `cranci1/Sora` (the app, GPLv3.0) — `Sora/Utlis & Misc/JSLoader/*`, `Sora/Utlis & Misc/Extensions/JavaScriptCore+Extensions.swift`, `Sora/Utlis & Misc/Modules/*`, `Sora/Views/MediaInfoView/*`
 - `cranci1/SoraCore` (the module engine, custom license) — `Sources/Models/Items.swift`, `Sources/Manager/Services.swift`, `Sources/JSLoader/JSController-{Search,Details,Streams}.swift`
+- `cranci1/Luna` (the app these modules primarily target) — `Luna/Views/MediaDetailView.swift`, `Luna/Views/View Elements/ServicesResultsSheet.swift`, `Kanzen/KanzenEngine/**`
 
 This is the authoritative contract for these modules. Where a community module, guide, or
 this project's own assumptions disagree with this document, the source wins.
+
+---
+
+## 0. Hosts
+
+These modules run on **Luna** first and on **Sora** second. The two share a module engine,
+so one module serves both — but they are not identical, and the differences below are the
+ones that change what a module must emit.
+
+### 0.1 Luna is the primary target
+
+Luna's video path does `import SoraCore` and pins it from `main` (rev `e82c920` at time of
+writing), so search, details, episodes and stream parsing are SoraCore's — the same
+contract derived below. The entry points, the `JSON.stringify` requirement, and the
+`sources` shape are identical on both hosts.
+
+Luna also ships a second, unrelated engine: `Kanzen`, for manga/webtoon. It uses
+`extractChapters` and `extractImages` and knows nothing about video, streams or HLS.
+**These modules target the SoraCore video path and have nothing to do with Kanzen.**
+
+### 0.2 Where the two hosts differ
+
+| | Sora | Luna |
+|---|---|---|
+| Search call | `searchResults(keyword)` | `searchResults(keyword, page)` — the extra argument is safely ignored by a one-parameter function |
+| Sources | `MediaInfoView.streamOptions(fromSources:)` | `MediaDetailView.parseStreamOptions(streams:sources:)` — same keys, same fallbacks |
+| Multi-stream path | entered when `streams.count > 0` | entered only when `streams.count > 1`; a single bare stream instead falls through to `extractSingleStreamURL` |
+| **Custom headers** | **replaces** the default set: `if let headers, !headers.isEmpty { use them } else { Referer/Origin = baseUrl }` | **merges over** the defaults: builds `Origin`/`Referer`/`User-Agent` from `baseUrl`, then overrides each key the module supplies |
+| Default UA | hardcoded desktop Chrome 134 | `URLSession.randomUserAgent` |
+
+The header difference is the one that matters. A module that emits a bare URL gets the
+**module's own `baseUrl` as the `Referer`** on both hosts, because neither can invent a
+better one. For a provider whose media lives on a third-party CDN, that referer is often
+rejected outright — see §6.1, which is a real bug this repository hit and fixed.
+
+Emitting `sources` with an explicit `headers` object is correct on both hosts: Sora uses it
+in place of its defaults, Luna merges it over its own.
 
 ---
 
@@ -303,6 +341,38 @@ Top-level `subtitles` is `[String]` or a single string, and is what the player p
 **Headers are the only way to express referer/UA requirements** (§19). This is the
 Sora-supported structure; there is no other. Cookies belong here only if a provider sets them
 anonymously. No personal cookies, no tokens, ever (§37).
+
+### 6.1 Emitting a bare URL means your `baseUrl` becomes the `Referer`
+
+This is the failure mode in §0.2, written up because it cost a real debugging session and is
+easy to reintroduce.
+
+When a module resolves a plain URL — form 3 or 4 above — the host has no header information
+and supplies its own. On both hosts that default is `Referer: <module baseUrl>` (plus
+`Origin`, plus a desktop User-Agent).
+
+If the media is served from a **different host**, that referer is sent to a server that has no
+reason to trust it. Twitter's CDN (`video.twimg.com`) answers **403 Forbidden** to
+`Referer: https://pornmz.com` and **200** to the same URL with no referer, with a
+`twitter.com` referer, or with a referer of its own origin. Chrome's User-Agent and the
+`Origin` header are both innocent; the `Referer` alone decides it.
+
+In the app this looks like a module that works perfectly — search, thumbnails, details, a
+play button — and then plays nothing, showing a crossed-out play button. Nothing in the UI
+points at a header.
+
+**The rule: if a provider serves media from a host other than its own `baseUrl`, emit a
+`sources` object with an explicit `Referer`, derived from the media URL's own origin.** Not
+hardcoded — derived, so a CDN change cannot silently reintroduce the 403:
+
+```js
+var origin = /^(https?:\/\/[^\/?#]+)/i.exec(streamUrl);
+return { "Referer": origin ? origin[1] : BASE_URL };
+```
+
+This is not circumventing an access control. The media is public and unauthenticated; the
+referrer is an ordinary HLS request header, and pointing it at the host actually serving the
+bytes is the accurate value rather than a fabricated one.
 
 ---
 

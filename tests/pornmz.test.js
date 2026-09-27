@@ -242,14 +242,57 @@ test('streams: the host yields a playable option with the real playlist URL', as
     test.ok(!parsed.fellBack, 'not the raw-string fallback branch');
 });
 
+test('streams: the source carries a Referer the CDN will accept', async () => {
+    // Regression guard for a real failure: both hosts default Referer to the
+    // module's baseUrl when a source has no headers, and the CDN answers
+    // 403 Forbidden to a pornmz.com referer. The player then shows a crossed-
+    // out play button and nothing plays.
+    const ctx = load();
+    const options = h.hostStreamOptions(
+        h.hostParseStream(await ctx.context.extractStreamUrl(PAGE_URL)));
+
+    const referer = options[0].headers && options[0].headers.Referer;
+    test.ok(referer, 'a Referer travels with the source');
+    test.equal(referer, 'https://video.twimg.com',
+        'pointed at the host actually serving the playlist');
+    test.ok(referer.indexOf('pornmz.com') === -1,
+        'and specifically not at the module baseUrl, which the CDN rejects');
+});
+
+test('streams: the Referer is derived from the playlist, not hardcoded', async () => {
+    // If the provider moves its video to another CDN, the referer has to follow
+    // it. Deriving it means a CDN change cannot silently reintroduce the 403.
+    const url = 'https://pornmz.com/video/id=pm-othercdn';
+    const ctx = load({
+        [url]: {
+            status: 200,
+            body: '<meta itemprop="contentUrl" content="https://cdn.example.net/live/x.m3u8" />'
+        }
+    });
+    const options = h.hostStreamOptions(
+        h.hostParseStream(await ctx.context.extractStreamUrl(url)));
+    test.equal(options[0].headers.Referer, 'https://cdn.example.net',
+        'follows whatever host serves the playlist');
+});
+
+test('streams: a source is emitted, not a bare URL string', async () => {
+    // A bare URL cannot carry headers, which is the whole point of the fix.
+    const ctx = load();
+    const parsed = h.hostParseStream(await ctx.context.extractStreamUrl(PAGE_URL));
+    test.true(Array.isArray(parsed.sources), 'host read it as sources');
+    test.equal(parsed.streams, null, 'not the bare-streams branch');
+    test.ok(parsed.sources[0].headers, 'and the source has headers');
+});
+
 test('streams: the playlist URL is the one published by the page, not a guess', async () => {
     // The embed is an iframe to a third-party player that would yield a
     // different, expiring URL. Asserting the exact published URL pins that the
     // module never goes near it.
     const ctx = load();
     const parsed = h.hostParseStream(await ctx.context.extractStreamUrl(PAGE_URL));
-    test.includes(parsed.streams[0], 'video.twimg.com', 'taken from the microdata contentUrl');
-    test.equal(parsed.streams[0].indexOf('player-x.php'), -1, 'no embed URL emitted');
+    const url = parsed.sources[0].streamUrl;
+    test.includes(url, 'video.twimg.com', 'taken from the microdata contentUrl');
+    test.equal(url.indexOf('player-x.php'), -1, 'no embed URL emitted');
 });
 
 test('streams: a page with no contentUrl reports no source instead of faking one', async () => {
