@@ -84,6 +84,21 @@ test('"Invalid URL" arrives as a bare string, not an object', async () => {
     test.equal(res.reason, 'bad-request', 'reason');
 });
 
+test('the two hosts report an unusable URL differently, and both are handled', async () => {
+    // Sora resolves the bare String "Invalid URL"; SoraCore (Luna) resolves
+    // {error: "Invalid URL"}. Verified by reading both copies of setupFetchV2.
+    // A module that only handles one host silently misreads the other, so this
+    // pins both shapes as failures rather than successes.
+    const sora = withRoutes({ 'https://p.test/bad': { invalidUrl: true } });
+    const soraRes = await sora.get('https://p.test/bad');
+    test.equal(soraRes.kind, 'error', 'Sora: the string form is a failure');
+
+    const luna = withRoutes({ 'https://p.test/bad': { transportError: 'Invalid URL' } });
+    const lunaRes = await luna.get('https://p.test/bad');
+    test.equal(lunaRes.kind, 'error', 'Luna: the object form is also a failure');
+    test.equal(lunaRes.status, undefined, 'and carries no status, so it is not read as HTTP 0');
+});
+
 test('non-2xx is kind=http and keeps the status', async () => {
     // 403 and 429 are conditions, not outages, and must not be retried as if the
     // host were unreachable.

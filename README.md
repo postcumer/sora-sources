@@ -134,6 +134,10 @@ empty result set, a post with no thumbnail, and a page publishing no stream.
 - **[pornmz.com](modules/pornmz/)** — built and tested.
 - **hanime.tv, sxyprn.com, pornhub.com** — assessed, not built, and why:
   [`PROVIDERS.md`](PROVIDERS.md).
+- **Six issues in the host apps** found while building against Sora, Luna and SoraCore, each
+  with file and line references: [`UPSTREAM-REPORT.md`](UPSTREAM-REPORT.md). The most
+  consequential is that the download path drops per-source headers, so a module can stream
+  successfully and still fail to download with a 403.
 
 ---
 

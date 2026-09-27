@@ -182,6 +182,79 @@ test('search: the keyword is URL-encoded into the request', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Browse keywords
+// ---------------------------------------------------------------------------
+
+const BROWSE_URL =
+    'https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia';
+
+function browseFixture() {
+    return {
+        [BROWSE_URL]: {
+            status: 200,
+            body: JSON.stringify([
+                { link: PAGE_URL, title: { rendered: 'Newest first' } },
+                { link: PAGE_URL + '2', title: { rendered: 'Then this' } }
+            ])
+        }
+    };
+}
+
+test('browse: a recency keyword lists the newest posts instead of searching', async () => {
+    // Neither app has a home page — Sora has no home tab, and both refuse to
+    // call a module with an empty query — so a keyword the user chooses is the
+    // only way in to a listing of what the provider has published.
+    const ctx = load(browseFixture());
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    test.true(parsed.ok, 'the host could parse the result');
+    test.equal(parsed.items.length, 2, 'the newest posts are returned');
+    test.equal(parsed.items[0].title, 'Newest first', 'newest first');
+    test.equal(requestCount(ctx), 1, 'one request');
+});
+
+test('browse: the request asks for date order and carries no search term', async () => {
+    const ctx = load(browseFixture());
+    await ctx.context.searchResults('latest');
+    const url = ctx.calls[0].url;
+    test.includes(url, 'orderby=date', 'newest first');
+    test.includes(url, 'order=desc', 'and explicitly descending');
+    test.includes(url, '_embed=wp:featuredmedia', 'thumbnails still embedded');
+    test.equal(url.indexOf('search='), -1, 'no search term — there is nothing to match');
+});
+
+test('browse: the keyword match ignores case and surrounding space', async () => {
+    for (const keyword of ['LATEST', '  Latest  ', 'Newest', 'new', 'recent', 'fresh']) {
+        const ctx = load(browseFixture());
+        const parsed = h.hostParseSearch(await ctx.context.searchResults(keyword));
+        test.equal(parsed.items.length, 2, JSON.stringify(keyword) + ' browses');
+    }
+});
+
+test('browse: popularity words are NOT treated as a browse', async () => {
+    // The provider publishes no popularity signal — no view counts, no trending
+    // list, nothing. Answering "popular" with the newest posts would put a
+    // confident label on data that does not mean it, so these fall through to a
+    // real text search and return whatever the site genuinely matches.
+    for (const keyword of ['popular', 'trending', 'top', 'best']) {
+        const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=' + keyword +
+            '&per_page=20&_embed=wp:featuredmedia';
+        const ctx = load({ [url]: { status: 200, body: '[]' } });
+        await ctx.context.searchResults(keyword);
+        test.includes(ctx.calls[0].url, 'search=' + keyword,
+            JSON.stringify(keyword) + ' searches rather than pretending to browse');
+    }
+});
+
+test('browse: a browse word inside a longer phrase is still a text search', async () => {
+    // "latest milf" is a real query, not a browse intent. Matching whole words
+    // only is what keeps the two apart.
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=latest%20milf&per_page=20&_embed=wp:featuredmedia';
+    const ctx = load({ [url]: { status: 200, body: '[]' } });
+    await ctx.context.searchResults('latest milf');
+    test.includes(ctx.calls[0].url, 'search=latest%20milf', 'searched as written');
+});
+
+// ---------------------------------------------------------------------------
 // extractDetails / extractEpisodes
 // ---------------------------------------------------------------------------
 

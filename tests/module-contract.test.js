@@ -100,10 +100,19 @@ for (const dir of dirs) {
         test.equal(manifest.novel, undefined,
             'no "novel" key — these are media modules');
 
+        // `asyncJS` is the master switch: Sora checks it first and routes search,
+        // details AND streams to the Promise path. `streamAsyncJS` is only read in
+        // the `else if` branch, so with asyncJS true it is dead — and if the two
+        // checks were ever reordered, setting it would route this module to the
+        // HTML-first path and break playback. An earlier revision of this linter
+        // demanded the opposite; the source says otherwise.
         if (manifest.asyncJS === true) {
-            test.equal(manifest.streamAsyncJS, true,
-                'streamAsyncJS set too — otherwise the streams path runs in sync mode ' +
-                'and is handed raw HTML by a module expecting a URL');
+            test.equal(manifest.streamAsyncJS, undefined,
+                'streamAsyncJS omitted — it is inert once asyncJS is true, and ' +
+                'actively harmful if the host ever checks it first');
+        } else {
+            test.ok(manifest.streamAsyncJS === true || manifest.streamAsyncJS === false,
+                'a synchronous-search module states streamAsyncJS explicitly');
         }
     });
 

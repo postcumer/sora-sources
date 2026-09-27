@@ -8,11 +8,35 @@ A module for [pornmz.com](https://pornmz.com), for [Luna](https://github.com/cra
 | | |
 |---|---|
 | Search | WordPress REST API, one request |
+| Browse | Type `latest` for the newest posts — see *Browsing* below |
 | Episodes | One post = one standalone video |
 | Sources | The HLS playlist published in the page's own microdata |
 | Quality | Up to 1080p (measured — see below) |
 | Auth | None. No keys, cookies or tokens anywhere in the module. |
-| asyncJS / streamAsyncJS | `true` / `true` |
+| asyncJS | `true` |
+
+## Browsing
+
+Search for **`latest`** (also `newest`, `new`, `recent`, `recently`, `fresh`) and the module
+returns the provider's newest posts as a grid, instead of matching text. It is one request:
+
+```
+GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia
+```
+
+**Why a keyword and not a landing page.** Neither app has a home page for a module to fill.
+Sora has no home tab at all — `ContentView.swift` defines exactly four: Library, Downloads,
+Settings, Search — and both hosts refuse to call a module with an empty query
+(`SearchView.swift:243`, Luna `SearchView.swift:506`). A keyword the user chooses is the only
+way in, so that is what this is.
+
+**Only recency words are mapped.** `popular`, `trending`, `top` and `best` deliberately fall
+through to a real text search. This provider publishes no popularity signal — no view counts,
+no trending list, nothing — so answering "popular" with the newest posts would put a confident
+label on data that does not mean it. A browse that lies is worse than no browse. Words are
+matched whole, so `latest milf` is still an ordinary search.
+
+Measured live: 20 posts, 20 thumbnails, newest first.
 
 ## The one bug worth reading about
 
@@ -54,6 +78,7 @@ Two, both public and unauthenticated:
 
 ```
 GET https://pornmz.com/wp-json/wp/v2/posts?search={kw}&per_page=20&_embed=wp:featuredmedia
+GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia
 GET https://pornmz.com/video/id={post}
 ```
 
@@ -177,6 +202,13 @@ work with no observable result.
 
 ## Deliberate omissions
 
+- **`streamAsyncJS` is not in the manifest.** An earlier revision shipped
+  `asyncJS: true, streamAsyncJS: true`. Reading the host source shows `asyncJS` is the master
+  switch — Sora checks it first and routes search, details *and* streams to the Promise path
+  (`MediaInfoView.swift:1877-1883`) — and `streamAsyncJS` is only consulted in the `else if`
+  branch. With `asyncJS` true it is dead, and if the two checks were ever reordered it would
+  send the module down the HTML-first path and break playback outright. Luna never reads
+  either flag; it always uses the async path. Removed once the source was checked properly.
 - **`aliases` is always empty.** The page's `og:title` is this same title with
   site marketing appended (`"… – Free HD Porn Video – Pornmz"`). That is not an
   alternate name, and writing it into the alias field would surface the site's

@@ -48,6 +48,22 @@ var META_REPEATS = {
     "contentUrl": false
 };
 
+// Keywords that mean "show me the newest posts" rather than "find posts whose
+// text matches".
+//
+// Only recency intents are listed. "popular", "trending" and "top" are
+// deliberately absent: this provider publishes no popularity signal at all, so
+// answering those with the newest posts would put a confident label on data
+// that does not mean it. A browse that lies is worse than no browse (§31, §54).
+var BROWSE_KEYWORDS = {
+    "latest": true,
+    "newest": true,
+    "new": true,
+    "recent": true,
+    "recently": true,
+    "fresh": true
+};
+
 // ---------------------------------------------------------------------------
 // Network
 // ---------------------------------------------------------------------------
@@ -234,6 +250,14 @@ function metaContent(html, itemprop) {
  * image is "" when a post has no featured media: the thumbnail is missing
  * upstream and inventing one would be a fabricated value (§31, §54). Losing the
  * whole result row over an absent thumbnail is the worse trade.
+ *
+ * A browse keyword (see BROWSE_KEYWORDS) skips the text search and returns the
+ * provider's newest posts instead — the listing its own front page shows, in
+ * the grid shape both apps render. Neither app can be made to show a landing
+ * page: Sora has no home tab at all (ContentView.swift lists exactly Library,
+ * Downloads, Settings, Search) and both hosts refuse to call a module with an
+ * empty query (SearchView.swift:243, Luna SearchView.swift:506). A keyword the
+ * user chooses is the only way in.
  */
 function searchResults(keyword) {
     var query = String(keyword === undefined || keyword === null ? "" : keyword).trim();
@@ -247,8 +271,18 @@ function searchResults(keyword) {
     // relation the module actually reads returned byte-identical rows in a
     // median 2.6 s against 7.1 s, so the other two relations were pure latency
     // and load on someone else's server (§48, §49).
-    var url = BASE_URL + SEARCH_ENDPOINT + "?search=" + encodeURIComponent(query) +
-        "&per_page=" + SEARCH_LIMIT + "&_embed=wp:featuredmedia";
+    var browse = BROWSE_KEYWORDS[query.toLowerCase()] === true;
+    var url;
+    if (browse) {
+        // No search parameter: there is no text to match against. orderby/date
+        // is WordPress's own default ordering, stated explicitly so the intent
+        // survives a future default change.
+        url = BASE_URL + SEARCH_ENDPOINT + "?per_page=" + SEARCH_LIMIT +
+            "&orderby=date&order=desc&_embed=wp:featuredmedia";
+    } else {
+        url = BASE_URL + SEARCH_ENDPOINT + "?search=" + encodeURIComponent(query) +
+            "&per_page=" + SEARCH_LIMIT + "&_embed=wp:featuredmedia";
+    }
 
     return get(url).then(function (result) {
         if (result.kind !== "ok") {

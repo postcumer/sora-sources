@@ -86,20 +86,27 @@ Critically, **`fetchv2` resolves on failure rather than rejecting.** Inspect the
 (`JavaScriptCore+Extensions.swift`, `setupFetchV2`): every failure path calls `callResolve`
 with a dictionary that has an `error` key and **no `status`**:
 
-| Condition | Resolves with |
-|---|---|
-| `URL(string:)` returned nil | the bare **string** `"Invalid URL"` (not an object) |
-| transport failure | `{error: "<localizedDescription>"}` |
-| no data | `{error: "No data"}` |
-| body > 10 MB | `{error: "Response exceeds maximum size"}` |
-| decode failed under all encodings | `{status, headers, body: ""}` — a **200-shaped** result with an empty body |
-| GET with a non-empty body | the bare string `"GET request must not have a body"` |
+| Condition | Sora resolves with | Luna (SoraCore) resolves with |
+|---|---|---|
+| `URL(string:)` returned nil | the bare **string** `"Invalid URL"` (not an object) | `{error: "Invalid URL"}` — an object |
+| transport failure | `{error: "<localizedDescription>"}` | same |
+| no data | `{error: "No data"}` | same |
+| body > 10 MB | `{error: "Response exceeds maximum size"}` | same |
+| decode failed under all encodings | `{status, headers, body: ""}` — a **200-shaped** result with an empty body | same |
+| GET with a non-empty body | the bare string `"GET request must not have a body"` | same |
+
+**The two hosts differ on exactly one case: an unusable URL.** Sora resolves the bare string
+`"Invalid URL"`; SoraCore resolves `{error: "Invalid URL"}`. This was verified by reading both
+copies of `setupFetchV2`, not inferred — an earlier revision of this file documented only the
+string form, which would have been wrong for Luna. A module must therefore branch on the
+*type* before it branches on `error`, or it will miss one host.
 
 Consequences a module must respect:
 
-- Always test `typeof res === "object" && res !== null && res.error` **before** reading `res.status`.
-- `"Invalid URL"` is a string. `res.status` is `undefined` and `res.json()` rejects, but the
-  failure surfaces late and as a confusing parse error instead of an invalid-URL error.
+- Test `typeof res === "string"` **first**, then `res.error`, and only then `res.status`. In that
+  order the same code is correct on both hosts.
+- An empty `body` with a valid `status` is a *successful empty response*, not a network error.
+  Distinguish it (§8).
 - An empty `body` with a valid `status` is a *successful empty response*, not a network error.
   Distinguish it (§8).
 - `res.json()` **rejects** on malformed JSON (`Promise.reject("JSON parse error: ...")`), it does
@@ -171,15 +178,15 @@ is optional with defaults.
   "quality":     "1080p",
   "searchBaseUrl": "https://example.com/search?q=%s",
 
-  "asyncJS":      false,
-  "streamAsyncJS": false,
+  "asyncJS":      true,
   "softsub":      false,
-  "multiStream":  false,
-  "multiSubs":    false,
   "type":         "…",
   "novel":        false
 }
 ```
+
+An async module needs only `asyncJS: true`. `streamAsyncJS`, `multiStream` and `multiSubs`
+are omitted because nothing reads them — see the field table below.
 
 **Drift note.** The app's `ModuleMetadata` ends with `novel: Bool?`; SoraCore's
 `ServiceMetadata` has `settings: Bool?` and **no** `novel`. `JSONDecoder` silently ignores
@@ -190,11 +197,10 @@ SoraCore. **Ship `novel`**, because the app is what decodes the manifest. Do not
 | Field | Meaning |
 |---|---|
 | `searchBaseUrl` | **Must contain the literal `%s`.** The host replaces `%s` with the percent-encoded keyword and fetches the result itself. |
-| `asyncJS` | `false` → host fetches HTML, calls sync functions. `true` → module does its own networking via Promises. |
-| `streamAsyncJS` | Same switch, for the streams path only. Can differ from `asyncJS`. |
+| `asyncJS` | The master switch. `true` → the host calls the module's functions directly and awaits Promises, for **search, details and streams alike**. `false` → the host fetches the HTML itself and calls synchronous functions. |
+| `streamAsyncJS` | **Only consulted when `asyncJS` is `false`.** Sora's dispatch is `if asyncJS {…} else if streamAsyncJS {…} else {…}`, so with `asyncJS: true` this field is dead. It exists for a module whose *search* is synchronous but whose *streams* are not. Do not ship it as `true` alongside `asyncJS: true`: it is inert today, and if the two checks were ever reordered it would route the module to the HTML-first path and break playback outright. |
 | `softsub` | Whether the module returns baked-in subtitles. |
-| `multiStream` | Whether `extractStreamUrl` returns several servers. |
-| `multiSubs` | Whether several subtitle tracks are returned. |
+| `multiStream` / `multiSubs` | **Declared in both apps' models and read by neither.** An earlier revision of this file described a "multi-stream threshold" in the player; no such check exists in Sora or Luna. Harmless to omit, wrong to rely on. |
 | `streamType` / `quality` | **Display strings for the module info tile** (`ModuleAdditionSettingsView.swift:132-138`). They are metadata shown to the user, *not* a declaration enforced by the player, and not a guarantee about any stream. |
 | `type` | Free-text tile label; `nil` renders as `-`. |
 
