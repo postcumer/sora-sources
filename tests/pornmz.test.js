@@ -187,16 +187,17 @@ test('search: the keyword is URL-encoded into the request', async () => {
 
 const BROWSE_URL =
     'https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia';
+const BROWSE_OLDEST_URL =
+    'https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=asc&_embed=wp:featuredmedia';
 
 function browseFixture() {
+    const body = JSON.stringify([
+        { link: PAGE_URL, title: { rendered: 'Newest first' } },
+        { link: PAGE_URL + '2', title: { rendered: 'Then this' } }
+    ]);
     return {
-        [BROWSE_URL]: {
-            status: 200,
-            body: JSON.stringify([
-                { link: PAGE_URL, title: { rendered: 'Newest first' } },
-                { link: PAGE_URL + '2', title: { rendered: 'Then this' } }
-            ])
-        }
+        [BROWSE_URL]: { status: 200, body: body },
+        [BROWSE_OLDEST_URL]: { status: 200, body: body }
     };
 }
 
@@ -222,19 +223,35 @@ test('browse: the request asks for date order and carries no search term', async
     test.equal(url.indexOf('search='), -1, 'no search term — there is nothing to match');
 });
 
+test('browse: "oldest" walks the archive in the other direction', async () => {
+    // The provider can answer this honestly — the API sorts by post date either
+    // way. Unlike "popular", which there is no data behind at all.
+    const ctx = load(browseFixture());
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('oldest'));
+    test.equal(parsed.items.length, 2, 'results returned');
+    test.includes(ctx.calls[0].url, 'order=asc', 'oldest first');
+    test.includes(ctx.calls[0].url, 'orderby=date', 'ordered by post date');
+    test.equal(ctx.calls[0].url.indexOf('search='), -1, 'still a browse, not a text search');
+});
+
 test('browse: the keyword match ignores case and surrounding space', async () => {
     for (const keyword of ['LATEST', '  Latest  ', 'Newest', 'new', 'recent', 'fresh']) {
         const ctx = load(browseFixture());
         const parsed = h.hostParseSearch(await ctx.context.searchResults(keyword));
         test.equal(parsed.items.length, 2, JSON.stringify(keyword) + ' browses');
     }
+    for (const keyword of ['Oldest', 'OLDEST', '  old  ', 'oldest first']) {
+        const ctx = load(browseFixture());
+        await ctx.context.searchResults(keyword);
+        test.includes(ctx.calls[0].url, 'order=asc', JSON.stringify(keyword) + ' walks backwards');
+    }
 });
 
 test('browse: popularity words are NOT treated as a browse', async () => {
-    // The provider publishes no popularity signal — no view counts, no trending
-    // list, nothing. Answering "popular" with the newest posts would put a
-    // confident label on data that does not mean it, so these fall through to a
-    // real text search and return whatever the site genuinely matches.
+    // Checked, not assumed: the API rejects orderby=comment_count outright
+    // (HTTP 400 "Invalid parameter(s): orderby"), posts carry no view count,
+    // and the only accepted orderings are date, modified, id and title. There is
+    // no popularity signal here, so these fall through to a real text search.
     for (const keyword of ['popular', 'trending', 'top', 'best']) {
         const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=' + keyword +
             '&per_page=20&_embed=wp:featuredmedia';
@@ -252,6 +269,20 @@ test('browse: a browse word inside a longer phrase is still a text search', asyn
     const ctx = load({ [url]: { status: 200, body: '[]' } });
     await ctx.context.searchResults('latest milf');
     test.includes(ctx.calls[0].url, 'search=latest%20milf', 'searched as written');
+});
+
+test('browse: inherited object names are not mistaken for keywords', async () => {
+    // hasOwnProperty, not a truthiness test. A bare lookup would match
+    // "constructor", "toString" and friends on Object.prototype and turn a
+    // perfectly ordinary search into a browse.
+    for (const keyword of ['constructor', 'tostring', 'valueof', 'hasownproperty']) {
+        const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=' + keyword +
+            '&per_page=20&_embed=wp:featuredmedia';
+        const ctx = load({ [url]: { status: 200, body: '[]' } });
+        await ctx.context.searchResults(keyword);
+        test.includes(ctx.calls[0].url, 'search=' + keyword,
+            JSON.stringify(keyword) + ' is searched, not browsed');
+    }
 });
 
 // ---------------------------------------------------------------------------
@@ -396,6 +427,41 @@ test('streams: the Referer is derived from the playlist, not hardcoded', async (
         h.hostParseStream(await ctx.context.extractStreamUrl(url)));
     test.equal(options[0].headers.Referer, 'https://cdn.example.net',
         'follows whatever host serves the playlist');
+});
+
+test('downloads: the manifest baseUrl is the host the CDN will answer', async () => {
+    // The download path is the one part of playback the module cannot fix from
+    // JS. Sora's generateDownloadHeaders builds Referer/Origin from
+    // module.metadata.baseUrl and never consults a source's own headers, so
+    // this static field is the only lever there is. Left as pornmz.com it sent
+    // a referer the CDN answers 403 to, and the log said so:
+    //   "Using legacy download method for queued download (no module available)"
+    //   "HTTP 403 for M3U8 request"
+    // which is why baseUrl points at the CDN origin rather than the site.
+    //
+    // The trade: this is static, so a CDN change breaks downloads while
+    // playback keeps working — the player's Referer is derived from the playlist
+    // at runtime, this one is not. That is the only asymmetry in the module, and
+    // this test is what makes the failure loud when it happens.
+    const manifest = JSON.parse(
+        require('fs').readFileSync(path.join(MODULE_DIR, 'manifest.json'), 'utf8'));
+    const origin = (url) => (/^(https?:\/\/[^\/?#]+)/i.exec(url) || [])[1];
+
+    test.equal(manifest.baseUrl, origin(STREAM_URL),
+        'baseUrl is the origin serving the published playlist');
+    test.equal(origin(manifest.baseUrl), origin(STREAM_URL),
+        'no path or trailing slash — the host compares it as an origin');
+});
+
+test('downloads: a manifest baseUrl change is caught, not silently shipped', async () => {
+    // A negative control, so the assertion above is known to be load-bearing:
+    // point baseUrl back at the site and the check must fail.
+    const manifest = JSON.parse(
+        require('fs').readFileSync(path.join(MODULE_DIR, 'manifest.json'), 'utf8'));
+    const wrong = 'https://pornmz.com';
+    const origin = (url) => (/^(https?:\/\/[^\/?#]+)/i.exec(url) || [])[1];
+    test.ok(origin(wrong) !== origin(STREAM_URL),
+        'the site origin and the CDN origin really do differ — the check is not vacuous');
 });
 
 test('streams: a source is emitted, not a bare URL string', async () => {

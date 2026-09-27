@@ -148,6 +148,17 @@ correct and the download path is the thing dropping the one header that made it 
 **Suggested fix:** thread the resolved source's `headers` through the download request the same
 way the player does.
 
+**Worked around in this repository, not fixed.** Since `baseUrl` is the only field the download
+path reads, the pornmz module sets it to the CDN origin (`https://video.twimg.com`) rather than
+the provider's own domain. That does resolve the 403, and it is a genuine workaround rather
+than a fix: the value is static, so a CDN migration breaks downloads while playback continues,
+and the app now displays the CDN as the module's "Base URL". Details and the reasoning are in
+`COMPATIBILITY.md` §6.1.1; the two origins are pinned together by a test so a CDN change fails
+the suite rather than reaching a device.
+
+Luna cannot be worked around this way at all — its downloader injects no headers, so no
+manifest value helps.
+
 ---
 
 ## 5. `multiStream` and `multiSubs` are declared and never read

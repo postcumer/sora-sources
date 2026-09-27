@@ -1,14 +1,16 @@
 # pornmz
 
-A module for [pornmz.com](https://pornmz.com), for [Luna](https://github.com/cranci1/Luna) and
-[Sora](https://github.com/cranci1/Sora).
+A module for [pornmz.com](https://pornmz.com), for [Sora](https://github.com/cranci1/Sora).
+
+Targets Sora. It also runs on Luna's SoraCore video path — the same engine, the same four entry
+points — but Luna is **not** a supported target right now; see `../../COMPATIBILITY.md` §0.
 
 ## What it does
 
 | | |
 |---|---|
 | Search | WordPress REST API, one request |
-| Browse | Type `latest` for the newest posts — see *Browsing* below |
+| Browse | Type `latest` or `oldest` — see *Browsing* below |
 | Episodes | One post = one standalone video |
 | Sources | The HLS playlist published in the page's own microdata |
 | Quality | Up to 1080p (measured — see below) |
@@ -17,26 +19,82 @@ A module for [pornmz.com](https://pornmz.com), for [Luna](https://github.com/cra
 
 ## Browsing
 
-Search for **`latest`** (also `newest`, `new`, `recent`, `recently`, `fresh`) and the module
-returns the provider's newest posts as a grid, instead of matching text. It is one request:
+Search for a keyword and the module returns a listing instead of matching text:
+
+| Type this | You get |
+|---|---|
+| `latest`, `newest`, `new`, `recent`, `recently`, `fresh` | The newest posts |
+| `oldest`, `old`, `oldest first` | The oldest posts — the archive walked backwards |
+
+One request either way:
 
 ```
 GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia
+GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=asc&_embed=wp:featuredmedia
 ```
 
-**Why a keyword and not a landing page.** Neither app has a home page for a module to fill.
-Sora has no home tab at all — `ContentView.swift` defines exactly four: Library, Downloads,
-Settings, Search — and both hosts refuse to call a module with an empty query
-(`SearchView.swift:243`, Luna `SearchView.swift:506`). A keyword the user chooses is the only
-way in, so that is what this is.
+**There are no on-screen buttons for this, and a module cannot add any.** This is worth being
+blunt about, because "no options for home / latest / oldest / popular in Sora" is the symptom of
+a platform limit rather than a gap in this module:
+
+- A module is a **script**. The engine injects four functions and takes their return values. It
+  has no DOM, no view, and no way to contribute a tab, a chip row, or a segmented control.
+  Adding one would mean editing the app, not the module.
+- Sora's `ContentView.swift` defines exactly four tabs — Library, Downloads, Settings, Search.
+  There is no home tab for a module's front page to fill.
+- `SearchView.swift:243` guards on `!searchQuery.isEmpty`, so the module is not even *called*
+  until something is typed.
+
+So the user-facing affordance is the search field itself, and the keyword is the option. That
+is a workaround for a missing platform feature, not a design preference.
 
 **Only recency words are mapped.** `popular`, `trending`, `top` and `best` deliberately fall
-through to a real text search. This provider publishes no popularity signal — no view counts,
-no trending list, nothing — so answering "popular" with the newest posts would put a confident
-label on data that does not mean it. A browse that lies is worse than no browse. Words are
-matched whole, so `latest milf` is still an ordinary search.
+through to a real text search. This is checked rather than assumed — the REST API rejects
+`orderby=comment_count` outright (HTTP 400, `Invalid parameter(s): orderby`), posts carry no
+view count, and the only orderings it accepts are `date`, `modified`, `id` and `title`. There
+is no popularity signal here at all, so answering "popular" with the newest posts would put a
+confident label on data that does not mean it. A browse that lies is worse than no browse.
+
+Words are matched **whole**, so `latest milf` is an ordinary search, not a browse.
 
 Measured live: 20 posts, 20 thumbnails, newest first.
+
+## Downloads
+
+Downloads needed a separate fix from playback, and this is the one part of the module's
+correctness that the JavaScript cannot influence.
+
+Sora's download path builds its request headers from `module.metadata.baseUrl` and **never
+consults a source's own headers**. The `Referer` that `extractStreamUrl` attaches — which is
+what makes playback work at all — is simply dropped. With `baseUrl` left at the provider's own
+domain, the CDN answered 403 to the download:
+
+```
+Using legacy download method for queued download (no module available)
+HTTP 403 for M3U8 request
+CoreMediaErrorDomain error -12660
+```
+
+So the manifest declares the **CDN origin** instead:
+
+```json
+"baseUrl": "https://video.twimg.com"
+```
+
+The app's info tile will display this as the module's "Base URL", which is now the CDN rather
+than the site. That is the honest value for what this field now means: it is the origin the
+player and downloader should claim to be talking to, and the provider's own domain still
+appears in `searchBaseUrl` and in every page the module fetches.
+
+**The trade, stated plainly.** This value is static, whereas the player's `Referer` is derived
+from the playlist URL at runtime. If the provider moves its video to a different CDN, playback
+keeps working and **downloads break** until this field is updated. That asymmetry is
+unavoidable — `baseUrl` is the only lever the download path exposes. A test pins the two
+origins together (`tests/pornmz.test.js`, *"downloads: the manifest baseUrl is the host the CDN
+will answer"*) so a CDN change fails the suite rather than reaching a device.
+
+**Luna is not fixed by this.** Luna's downloader injects no headers at all, so a pornmz video
+cannot be downloaded there regardless of what the manifest says. Streaming still works.
 
 ## The one bug worth reading about
 
@@ -68,17 +126,20 @@ var origin = /^(https?:\/\/[^\/?#]+)/i.exec(streamUrl);
 return { "Referer": origin ? origin[1] : BASE_URL };
 ```
 
-Sora *replaces* its header set with whatever the module supplies; Luna *merges* the module's
-headers over its own defaults. The same source object is correct on both — see
-`../../COMPATIBILITY.md` §0.2 and §6.1.
+Sora *replaces* its header set with whatever the module supplies. (SoraCore, which Luna also
+uses, *merges* the module's headers over its own defaults instead — the same source object is
+correct either way.) See `../../COMPATIBILITY.md` §0.2 and §6.1.
+
+This fix covers **playback only**. Downloads are a separate code path with separate rules — see
+*Downloads* below.
 
 ## Endpoints
 
-Two, both public and unauthenticated:
+Three, all public and unauthenticated:
 
 ```
 GET https://pornmz.com/wp-json/wp/v2/posts?search={kw}&per_page=20&_embed=wp:featuredmedia
-GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia
+GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order={asc|desc}&_embed=wp:featuredmedia
 GET https://pornmz.com/video/id={post}
 ```
 
@@ -238,6 +299,11 @@ Things that would break this module, and what the failure would look like:
 | `itemprop` names changed | `extractStreamUrl` logs `no contentUrl` | `metaContent`, `META_REPEATS` |
 | Thumbnail moved out of `_embedded` | Search rows show a blank image | `featuredImage` |
 | Attribute quoting changes | `metaContent` finds nothing | the two patterns in `metaContent` |
+| **Video moved to a different CDN** | **Playback still fine; downloads fail 403** | `manifest.json` `baseUrl` — see *Downloads* |
+
+The last row is the asymmetric one. Everything else the module degrades on its own; a CDN
+migration shows up in exactly one place, and the test that pins the two origins together will
+fail as soon as the playlist fixture is recaptured.
 
 **Before replacing the fixtures**, run the suite (`node ../../tests/run.js`). The
 fixtures under `tests/fixtures/pornmz/` are real captured responses, so a

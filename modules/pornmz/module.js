@@ -48,20 +48,30 @@ var META_REPEATS = {
     "contentUrl": false
 };
 
-// Keywords that mean "show me the newest posts" rather than "find posts whose
-// text matches".
+// Keywords that browse the archive rather than matching text.
 //
-// Only recency intents are listed. "popular", "trending" and "top" are
-// deliberately absent: this provider publishes no popularity signal at all, so
-// answering those with the newest posts would put a confident label on data
-// that does not mean it. A browse that lies is worse than no browse (§31, §54).
+// "newest" and "oldest" are recency intents, and this provider can answer both
+// honestly — the WordPress REST API sorts by post date in either direction.
+//
+// "popular", "trending", "top" and "best" are deliberately absent, and this is
+// checked rather than assumed: the API rejects `orderby=comment_count` outright
+// (HTTP 400, "Invalid parameter(s): orderby"), posts carry no view count, and
+// the only orderings it accepts are date, modified, id and title. There is no
+// popularity signal here to report, so answering those words with the newest
+// posts would put a confident label on data that does not mean it. A browse
+// that lies is worse than no browse (§31, §54).
+//
+// Value: undefined = newest first, "asc" = oldest first.
 var BROWSE_KEYWORDS = {
-    "latest": true,
-    "newest": true,
-    "new": true,
-    "recent": true,
-    "recently": true,
-    "fresh": true
+    "latest": undefined,
+    "newest": undefined,
+    "new": undefined,
+    "recent": undefined,
+    "recently": undefined,
+    "fresh": undefined,
+    "oldest": "asc",
+    "old": "asc",
+    "oldest first": "asc"
 };
 
 // ---------------------------------------------------------------------------
@@ -271,14 +281,21 @@ function searchResults(keyword) {
     // relation the module actually reads returned byte-identical rows in a
     // median 2.6 s against 7.1 s, so the other two relations were pure latency
     // and load on someone else's server (§48, §49).
-    var browse = BROWSE_KEYWORDS[query.toLowerCase()] === true;
+    // hasOwnProperty, not a truthiness test: the newest-first entries hold
+    // undefined on purpose, and a bare property lookup would also match
+    // inherited names like "constructor" or "toString".
+    var browseKey = query.toLowerCase();
+    var isBrowse = Object.prototype.hasOwnProperty.call(BROWSE_KEYWORDS, browseKey);
+    var order = isBrowse ? BROWSE_KEYWORDS[browseKey] : undefined;
+
     var url;
-    if (browse) {
-        // No search parameter: there is no text to match against. orderby/date
+    if (isBrowse) {
+        // No search parameter: there is no text to match against. orderby=date
         // is WordPress's own default ordering, stated explicitly so the intent
         // survives a future default change.
         url = BASE_URL + SEARCH_ENDPOINT + "?per_page=" + SEARCH_LIMIT +
-            "&orderby=date&order=desc&_embed=wp:featuredmedia";
+            "&orderby=date&order=" + (order === "asc" ? "asc" : "desc") +
+            "&_embed=wp:featuredmedia";
     } else {
         url = BASE_URL + SEARCH_ENDPOINT + "?search=" + encodeURIComponent(query) +
             "&per_page=" + SEARCH_LIMIT + "&_embed=wp:featuredmedia";

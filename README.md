@@ -1,13 +1,15 @@
-# Modules for Luna and Sora
+# Modules for Sora
 
-JavaScript modules for [Luna](https://github.com/cranci1/Luna) and
-[Sora](https://github.com/cranci1/Sora). A module teaches the app how to search a provider,
-describe a title, list its episodes, and resolve an episode to a playable stream.
+JavaScript modules for [Sora](https://github.com/cranci1/Sora). A module teaches the app how
+to search a provider, describe a title, list its episodes, and resolve an episode to a playable
+stream.
 
-**Luna is the primary target; Sora is supported too.** Luna's video path runs on SoraCore —
-the same engine Sora uses — so one module serves both. Their differences are documented in
-[`COMPATIBILITY.md`](COMPATIBILITY.md) §0. (Luna also ships a separate `Kanzen` engine for
-manga/webtoon; it uses `extractChapters`/`extractImages` and is unrelated to these modules.)
+**Sora is the target.** [Luna](https://github.com/cranci1/Luna) shares the same module engine
+via SoraCore, so a module written here runs there unchanged — but Luna is at **paused** status,
+because the two remaining gaps there are host-side rather than anything a module can address
+(home content, and a downloader that injects no headers). Both are written up in
+[`COMPATIBILITY.md`](COMPATIBILITY.md) §0.1 so the decision can be revisited without
+re-deriving it.
 
 These are modules **for** the host's module engine. They are not a scraping framework: there
 is no `UniversalScraperEngine`, no provider factory, no abstract media layer, and no shared
@@ -101,6 +103,10 @@ The constraints these modules are written to, and why the short answer is "no":
   the `Referer`, and a third-party CDN will often reject that with a 403. A bare URL is the
   single most common reason a module appears to work and then plays nothing — see
   `COMPATIBILITY.md` §6.1.
+- **If the media is on a different host than the site, `baseUrl` is that media host.** Sora's
+  downloader builds its headers from `baseUrl` and ignores per-source headers entirely, so
+  playback and download are fixed by two different fields. A module can play correctly and
+  still fail every download — see `COMPATIBILITY.md` §6.1.1.
 - **No caching of resolved media URLs.** They are tokenised and expire.
 - **Adapters stay inside one provider.** A failure in one module cannot affect another, and
   there is no `if (site === …)` chain.
@@ -131,13 +137,16 @@ empty result set, a post with no thumbnail, and a page publishing no stream.
 
 ## Status
 
-- **[pornmz.com](modules/pornmz/)** — built and tested.
+- **[pornmz.com](modules/pornmz/)** — built and tested, at 1.2.0.
+- **Luna** — paused. The module runs there, but two host-side gaps (§0.1) mean it is not a
+  target.
 - **hanime.tv, sxyprn.com, pornhub.com** — assessed, not built, and why:
   [`PROVIDERS.md`](PROVIDERS.md).
 - **Six issues in the host apps** found while building against Sora, Luna and SoraCore, each
   with file and line references: [`UPSTREAM-REPORT.md`](UPSTREAM-REPORT.md). The most
   consequential is that the download path drops per-source headers, so a module can stream
-  successfully and still fail to download with a 403.
+  successfully and still fail to download with a 403 — worked around at the manifest level
+  (§6.1.1), not fixed in the app.
 
 ---
 

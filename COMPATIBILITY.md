@@ -2,9 +2,9 @@
 
 Derived by reading the source of:
 
-- `cranci1/Sora` (the app, GPLv3.0) — `Sora/Utlis & Misc/JSLoader/*`, `Sora/Utlis & Misc/Extensions/JavaScriptCore+Extensions.swift`, `Sora/Utlis & Misc/Modules/*`, `Sora/Views/MediaInfoView/*`
+- `cranci1/Sora` (the app, GPLv3.0 — **the primary target**) — `Sora/Utlis & Misc/JSLoader/*`, `Sora/Utlis & Misc/Extensions/JavaScriptCore+Extensions.swift`, `Sora/Utlis & Misc/Modules/*`, `Sora/Views/MediaInfoView/*`
 - `cranci1/SoraCore` (the module engine, custom license) — `Sources/Models/Items.swift`, `Sources/Manager/Services.swift`, `Sources/JSLoader/JSController-{Search,Details,Streams}.swift`
-- `cranci1/Luna` (the app these modules primarily target) — `Luna/Views/MediaDetailView.swift`, `Luna/Views/View Elements/ServicesResultsSheet.swift`, `Kanzen/KanzenEngine/**`
+- `cranci1/Luna` (**secondary, paused** — see §0.1) — `Luna/Views/MediaDetailView.swift`, `Luna/Views/View Elements/ServicesResultsSheet.swift`, `Kanzen/KanzenEngine/**`
 
 This is the authoritative contract for these modules. Where a community module, guide, or
 this project's own assumptions disagree with this document, the source wins.
@@ -13,16 +13,32 @@ this project's own assumptions disagree with this document, the source wins.
 
 ## 0. Hosts
 
-These modules run on **Luna** first and on **Sora** second. The two share a module engine,
-so one module serves both — but they are not identical, and the differences below are the
-ones that change what a module must emit.
+These modules target **Sora**. The two apps share a module engine, so one module serves both —
+but the differences below are the ones that change what a module must emit, and a module cannot
+fix either difference from JavaScript.
 
-### 0.1 Luna is the primary target
+### 0.1 Target status: Sora primary, Luna paused
+
+**Sora is the target.** Luna is a secondary host at **paused** status, deliberately, after
+working against it and finding the remaining gaps are host-side rather than module-side.
 
 Luna's video path does `import SoraCore` and pins it from `main` (rev `e82c920` at time of
-writing), so search, details, episodes and stream parsing are SoraCore's — the same
-contract derived below. The entry points, the `JSON.stringify` requirement, and the
-`sources` shape are identical on both hosts.
+writing), so search, details, episodes and stream parsing are SoraCore's — the same contract
+derived below. The entry points, the `JSON.stringify` requirement, and the `sources` shape are
+identical on both hosts, and a module written for Sora runs on Luna unchanged.
+
+What is *not* fixable from a module:
+
+- **The home screen cannot render.** `HomeView.swift:473-481` awaits seven TMDB calls inside a
+  single `try await` with one `catch`; any single failure takes the whole home view down. Luna's
+  home content is not a module's to supply in the first place.
+- **Downloads carry no headers at all.** There is no equivalent of Sora's
+  `generateDownloadHeaders`, so a provider needing a specific `Referer` streams but never
+  downloads (§6.1).
+
+Working against Luna further would mean patching the app, not the module, so it is set aside
+until that changes. The differences are documented below and in §6.1 so the decision can be
+revisited without re-deriving it.
 
 Luna also ships a second, unrelated engine: `Kanzen`, for manga/webtoon. It uses
 `extractChapters` and `extractImages` and knows nothing about video, streams or HLS.
@@ -36,12 +52,15 @@ Luna also ships a second, unrelated engine: `Kanzen`, for manga/webtoon. It uses
 | Sources | `MediaInfoView.streamOptions(fromSources:)` | `MediaDetailView.parseStreamOptions(streams:sources:)` — same keys, same fallbacks |
 | Multi-stream path | entered when `streams.count > 0` | entered only when `streams.count > 1`; a single bare stream instead falls through to `extractSingleStreamURL` |
 | **Custom headers** | **replaces** the default set: `if let headers, !headers.isEmpty { use them } else { Referer/Origin = baseUrl }` | **merges over** the defaults: builds `Origin`/`Referer`/`User-Agent` from `baseUrl`, then overrides each key the module supplies |
+| **Download headers** | built from `metadata.baseUrl` — see §6.1 | **none at all** |
 | Default UA | hardcoded desktop Chrome 134 | `URLSession.randomUserAgent` |
+| Empty search query | module not called | module not called |
 
-The header difference is the one that matters. A module that emits a bare URL gets the
-**module's own `baseUrl` as the `Referer`** on both hosts, because neither can invent a
-better one. For a provider whose media lives on a third-party CDN, that referer is often
-rejected outright — see §6.1, which is a real bug this repository hit and fixed.
+Two of these are the ones that bite. A module that emits a bare URL gets **the module's own
+`baseUrl` as the `Referer`** on both hosts, because neither can invent a better one; and
+`baseUrl` is the only lever the *download* path exposes, since the per-source headers that fix
+playback are never consulted there. For a provider whose media lives on a third-party CDN, that
+referer is rejected outright — see §6.1, which is a real bug this repository hit and fixed.
 
 Emitting `sources` with an explicit `headers` object is correct on both hosts: Sora uses it
 in place of its defaults, Luna merges it over its own.
@@ -379,6 +398,43 @@ return { "Referer": origin ? origin[1] : BASE_URL };
 This is not circumventing an access control. The media is public and unauthenticated; the
 referrer is an ordinary HLS request header, and pointing it at the host actually serving the
 bytes is the accurate value rather than a fabricated one.
+
+#### 6.1.1 The download path ignores those headers, so `baseUrl` must be the media origin
+
+Fixing playback is not enough. Sora's downloader builds its request headers from
+`module.metadata.baseUrl` and **never reads a source's own headers**, so the `Referer` above is
+dropped on the way to disk and the download 403s:
+
+```
+Using legacy download method for queued download (no module available)
+HTTP 403 for M3U8 request
+CoreMediaErrorDomain error -12660
+```
+
+Measured against the same playlist: `Referer: https://pornmz.com` → **403**,
+`Referer: https://video.twimg.com` → **200**, and the same for a real media segment fetched
+from the variant playlist.
+
+**The rule: when the media host is not the provider's own domain, set `baseUrl` to the media
+origin.** That is the only module-side lever the download path exposes.
+
+```json
+"baseUrl": "https://video.twimg.com"
+```
+
+Three consequences worth stating rather than discovering:
+
+- **The app displays this.** The module info tile shows `baseUrl` as "Base URL", so it will
+  read as the CDN rather than the site. The provider's own domain still appears in
+  `searchBaseUrl` and in every URL the module fetches.
+- **`baseUrl` is static; the player's `Referer` is not.** If the provider migrates to another
+  CDN, playback keeps working and downloads break. That asymmetry is unavoidable, and a module
+  cannot cover both paths.
+- **Luna is not fixed by this.** Its downloader injects no headers at all, so no manifest value
+  helps (§0.1).
+
+Pin the two origins together in a test so a CDN change fails the suite rather than reaching a
+device.
 
 ---
 
