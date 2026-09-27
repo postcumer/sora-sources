@@ -53,11 +53,11 @@ headers over its own defaults. The same source object is correct on both — see
 Two, both public and unauthenticated:
 
 ```
-GET https://pornmz.com/wp-json/wp/v2/posts?search={kw}&per_page=20&_embed=1
+GET https://pornmz.com/wp-json/wp/v2/posts?search={kw}&per_page=20&_embed=wp:featuredmedia
 GET https://pornmz.com/video/id={post}
 ```
 
-`_embed=1` is what puts the thumbnail in the *search* response
+`_embed=wp:featuredmedia` is what puts the thumbnail in the *search* response
 (`_embedded["wp:featuredmedia"][0].source_url`), so a search is a single request
 rather than one per result. This is why the module does not need any absolute
 URL resolution: `post.link` and `source_url` are already absolute. The
@@ -103,6 +103,39 @@ The published playlist is a **demuxed A/V master**: three `#EXT-X-MEDIA` audio r
 variants, wired together by `AUDIO=` group references, with root-relative variant URIs. Both
 hosts' players follow this without help, so the module passes the master through untouched
 rather than trying to pick or pin a variant.
+
+## Speed
+
+This provider's WordPress server is **slow and highly variable** — the same page
+request measured anywhere from 1.7 s to 18 s across repeated runs. Every design choice
+here is about not asking it for more than necessary.
+
+**Search embeds one relation, not all of them.** `&_embed=wp:featuredmedia` instead of
+`&_embed=1`. Blanket `_embed` resolves every embeddable relation — author, terms,
+featured media — and this server pays for each as an internal sub-request. Measured over
+three runs each:
+
+| Request | Median | Thumbnails |
+|---|---|---|
+| `per_page=20&_embed=1` | **7058 ms** | 20/20 |
+| `per_page=20&_embed=wp:featuredmedia` | **2591 ms** | 20/20 |
+
+Identical rows, 2.7× faster. The other two relations were pure latency, and load on
+someone else's server.
+
+**The page is fetched once, not three times.** The host dispatches `extractDetails` and
+`extractEpisodes` concurrently on the same URL and then calls `extractStreamUrl` on it
+again, so the in-flight promise is memoised. The cache TTL is **5 minutes**, up from 60 s.
+
+That TTL is a deliberate trade against §25 (do not serve tokenised URLs stale), and it was
+resolved with evidence rather than a guess: a playlist URL captured **over an hour**
+earlier still returned **200** when re-checked, so the token is far more durable than it
+looks. Against that, one extra page fetch before playback is exactly what turns a
+two-second wait into a twenty-second blank screen on a server this variable. Five minutes
+covers open-details-then-press-play and still refetches on a later revisit.
+
+If playback ever starts failing with a stale-stream error, **this TTL is the first thing to
+lower** — drop it to 60 s and re-test.
 
 ## Quality
 
@@ -165,6 +198,6 @@ Things that would break this module, and what the failure would look like:
 fixtures under `tests/fixtures/pornmz/` are real captured responses, so a
 regenerated fixture diff shows exactly what the provider changed.
 
-**The `contentUrl` is tokenised and expires.** The 60-second page cache
-(`PAGE_TTL_MS`) forces a refetch before a stream is handed over; do not raise it
-much, or streams will start failing to play.
+**The `contentUrl` is tokenised and expires.** The 5-minute page cache (`PAGE_TTL_MS`) is a
+deliberate trade — see *Speed* above for the evidence behind it. If streams ever start
+failing to play, lower it before looking anywhere else.

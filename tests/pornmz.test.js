@@ -24,7 +24,7 @@ const STREAM_URL =
     'https://video.twimg.com/amplify_video/2103925197430546432/pl/LPYC0fG2Xdm6ncFL.m3u8';
 
 /** Fresh module + fixtures. Each test gets its own context so the page cache
- *  and its 60s TTL never leak between cases. */
+ *  and its TTL never leak between cases. */
 function load(extraRoutes) {
     const routes = h.readFixtures(FIXTURE_DIR);
     Object.keys(extraRoutes || {}).forEach((k) => { routes[k] = extraRoutes[k]; });
@@ -68,7 +68,7 @@ test('search: numeric entities in titles are decoded, not left as &#8211;', asyn
 test('search: a post with no featured media keeps its row with an empty image', async () => {
     // The host's compactMap drops a row whose image is not a String, so "" is
     // required — a missing key would delete the whole result.
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=nofm&per_page=20&_embed=1';
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=nofm&per_page=20&_embed=wp:featuredmedia';
     const ctx = load({
         [url]: {
             status: 200,
@@ -81,7 +81,7 @@ test('search: a post with no featured media keeps its row with an empty image', 
 });
 
 test('search: a post missing title or link is dropped, not emitted broken', async () => {
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=partial&per_page=20&_embed=1';
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=partial&per_page=20&_embed=wp:featuredmedia';
     const ctx = load({
         [url]: {
             status: 200,
@@ -99,7 +99,7 @@ test('search: a post missing title or link is dropped, not emitted broken', asyn
 });
 
 test('search: an empty result list is a valid answer, not a failure', async () => {
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=zzzznothing&per_page=20&_embed=1';
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=zzzznothing&per_page=20&_embed=wp:featuredmedia';
     const ctx = load({ [url]: { status: 200, body: '[]' } });
     const parsed = h.hostParseSearch(await ctx.context.searchResults('zzzznothing'));
     test.true(parsed.ok, 'parses cleanly');
@@ -120,7 +120,7 @@ test('search: HTTP failures are logged and degrade to an empty list', async () =
     // is visible, so the log must exist and must not carry the body.
     for (const status of [403, 429, 500]) {
         const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=f' + status +
-            '&per_page=20&_embed=1';
+            '&per_page=20&_embed=wp:featuredmedia';
         const ctx = load({ [url]: { status: status, body: 'refused' } });
         const parsed = h.hostParseSearch(await ctx.context.searchResults('f' + status));
         test.equal(parsed.items.length, 0, status + ' yields no results');
@@ -129,7 +129,7 @@ test('search: HTTP failures are logged and degrade to an empty list', async () =
 });
 
 test('search: a transport failure is logged as such, not as an HTTP error', async () => {
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=down&per_page=20&_embed=1';
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=down&per_page=20&_embed=wp:featuredmedia';
     const ctx = load({ [url]: { transportError: 'connection lost' } });
     await ctx.context.searchResults('down');
     test.includes(ctx.log.join('\n'), 'transport', 'transport failure distinguishable in the log');
@@ -138,7 +138,7 @@ test('search: a transport failure is logged as such, not as an HTTP error', asyn
 test('search: a 200 with an HTML body is reported as malformed, not as results', async () => {
     // A bot-check or maintenance page served with status 200. Treating it as
     // data is how a module ends up reporting a provider outage as "no matches".
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=html&per_page=20&_embed=1';
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=html&per_page=20&_embed=wp:featuredmedia';
     const ctx = load({ [url]: { status: 200, body: '<html>Just a moment...</html>' } });
     const parsed = h.hostParseSearch(await ctx.context.searchResults('html'));
     test.equal(parsed.items.length, 0, 'no results invented from HTML');
@@ -146,7 +146,7 @@ test('search: a 200 with an HTML body is reported as malformed, not as results',
 });
 
 test('search: a WordPress error object is not mistaken for a result list', async () => {
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=obj&per_page=20&_embed=1';
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=obj&per_page=20&_embed=wp:featuredmedia';
     const ctx = load({
         [url]: { status: 200, body: '{"code":"rest_invalid_param","message":"bad param"}' }
     });
@@ -348,6 +348,30 @@ test('an empty page body yields an empty result, not a crash', async () => {
     test.equal(episodes.episodes.length, 0, 'no episodes invented');
 });
 
+test('search: only the relation the module reads is embedded', async () => {
+    // _embed=1 resolves author and term relations too, which this provider's
+    // server serves as internal sub-requests: same rows, but a measured median
+    // of 7.1 s against 2.6 s. Naming the one relation needed is the difference
+    // between a search that feels instant and one that does not.
+    const ctx = load();
+    await ctx.context.searchResults('milf');
+    const url = ctx.calls[0].url;
+    test.includes(url, '_embed=wp:featuredmedia', 'named relation requested');
+    test.equal(url.indexOf('_embed=1&') === -1, true, 'and not the blanket _embed=1');
+});
+
+test('the stream is served from cache well after the details page', async () => {
+    // The provider's server is slow and variable — the same page request
+    // measured anywhere from 1.7 s to 18 s. A second fetch before playback is
+    // what turns a two-second wait into a twenty-second blank screen.
+    const ctx = load();
+    await ctx.context.extractDetails(PAGE_URL);
+    await ctx.context.extractEpisodes(PAGE_URL);
+    test.equal(requestCount(ctx), 1, 'one page fetch so far');
+    await ctx.context.extractStreamUrl(PAGE_URL);
+    test.equal(requestCount(ctx), 1, 'and the stream reuses it, no second fetch');
+});
+
 // ---------------------------------------------------------------------------
 // Runtime constraints
 // ---------------------------------------------------------------------------
@@ -363,7 +387,7 @@ test('the module never reaches for a URL constructor', async () => {
 
 test('logs never contain response payloads', async () => {
     // §52: a log line must stay small and must not carry a page or a body.
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=leak&per_page=20&_embed=1';
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=leak&per_page=20&_embed=wp:featuredmedia';
     const ctx = load({ [url]: { status: 500, body: 'A'.repeat(5000) } });
     await ctx.context.searchResults('leak');
     const logged = ctx.log.join('\n');

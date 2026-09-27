@@ -18,7 +18,8 @@
  *      response shape is inspected. So every fetch goes through get() below.
  *
  * Endpoints used, both public and unauthenticated:
- *   GET /wp-json/wp/v2/posts?search=…&per_page=…&_embed=1   (WordPress REST)
+ *   GET /wp-json/wp/v2/posts?search=…&per_page=…&_embed=wp:featuredmedia
+ *                                                          (WordPress REST)
  *   GET the video page, for its schema.org VideoObject microdata
  * The page's <iframe> player is deliberately not touched: the playable HLS URL
  * is already published in the microdata, so there is no reason to go near an
@@ -32,7 +33,7 @@
 var BASE_URL = "https://pornmz.com";
 var SEARCH_ENDPOINT = "/wp-json/wp/v2/posts";
 var SEARCH_LIMIT = 20;
-var PAGE_TTL_MS = 60000;
+var PAGE_TTL_MS = 300000;
 
 // itemprop -> how many <meta> tags carrying it are meaningful.
 //
@@ -120,8 +121,14 @@ function describe(result) {
 // memoising the in-flight promise collapses three fetches into one. Holding a
 // single URL keeps the cache bounded.
 //
-// The TTL is short on purpose: the contentUrl is tokenised and expires, so
-// serving a stale one yields a stream that will not play (§25).
+// The TTL is a real trade, not a free win. The contentUrl is tokenised, so a
+// cache that outlives the token would hand back a stream that will not play
+// (§25) — but the token is far more durable than it looks: one captured over an
+// hour earlier still returned 200 when re-checked. Meanwhile the provider's own
+// server is slow and wildly variable (the same request measured anywhere from
+// 1.7 s to 18 s), so an extra page fetch before playback is what turns a
+// two-second wait into a twenty-second blank screen. Five minutes comfortably
+// covers open-details-then-press-play, and still refetches on a later revisit.
 
 var cachedUrl = null;
 var cachedAt = 0;
@@ -216,8 +223,14 @@ function searchResults(keyword) {
         return Promise.resolve("[]");
     }
 
+    // _embed=wp:featuredmedia rather than _embed=1. Plain _embed resolves every
+    // embeddable relation — author, terms, featured media — and this provider's
+    // server pays for each one as an internal sub-request. Naming the single
+    // relation the module actually reads returned byte-identical rows in a
+    // median 2.6 s against 7.1 s, so the other two relations were pure latency
+    // and load on someone else's server (§48, §49).
     var url = BASE_URL + SEARCH_ENDPOINT + "?search=" + encodeURIComponent(query) +
-        "&per_page=" + SEARCH_LIMIT + "&_embed=1";
+        "&per_page=" + SEARCH_LIMIT + "&_embed=wp:featuredmedia";
 
     return get(url).then(function (result) {
         if (result.kind !== "ok") {

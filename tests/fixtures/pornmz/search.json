@@ -1,6 +1,6 @@
 {
   "__routes": {
-    "https://pornmz.com/wp-json/wp/v2/posts?search=milf&per_page=20&_embed=1": {
+    "https://pornmz.com/wp-json/wp/v2/posts?search=milf&per_page=20&_embed=wp:featuredmedia": {
       "status": 200,
       "headers": {
         "content-type": "application/json"
