@@ -330,14 +330,19 @@ function hostStreamOptions(parsed) {
  * script). Throws if the script leaves a pending exception, mirroring the check
  * in loadScript — a module that throws at load poisons every later call.
  */
-function loadModule(moduleDir, routes) {
+function loadModule(moduleDir, routes, settings) {
     const log = [];
     const calls = [];
     const sandbox = makeEnvironment(routes || {}, log, calls);
     const context = vm.createContext(sandbox);
 
     const scriptPath = path.join(moduleDir, 'module.js');
-    const source = fs.readFileSync(scriptPath, 'utf8');
+    let source = fs.readFileSync(scriptPath, 'utf8');
+    if (settings) {
+        // Go through the real rewriter rather than string-replacing in the test,
+        // so a settings block that Sora could not parse is caught here.
+        source = writeSettingsToFile(source, settings);
+    }
     vm.runInContext(source, context, { filename: scriptPath });
 
     if (vm.runInContext('typeof searchResults === "undefined" && ' +
@@ -346,6 +351,83 @@ function loadModule(moduleDir, routes) {
     }
 
     return { context: context, log: log, calls: calls, routes: routes || {} };
+}
+
+// ---------------------------------------------------------------------------
+// Module settings
+//
+// Transcriptions of the two Swift functions that make a module's `const`
+// declarations into a settings screen:
+//
+//   parseSettingsSchema    ModuleSettings.swift:120-167
+//   writeSettingsToFile    ModuleManager.swift:266-296
+//
+// A module's only user-facing UI is whatever these two functions surface, so they
+// are part of the contract and are reproduced rather than mocked.
+// ---------------------------------------------------------------------------
+
+/** Sora's schema scan: `const` lines between the two marker comments. */
+function parseSettingsSchema(source) {
+    const start = source.indexOf('// Settings start');
+    const end = start === -1 ? -1 : source.indexOf('// Settings end', start);
+    if (start === -1 || end === -1) return [];
+
+    const block = source.slice(start + '// Settings start'.length, end);
+    const entries = [];
+
+    // Swift: ^const\s+(\w+)\s*=\s*(.+?);(?:\s*//\s*(.*))?$ — matched per trimmed line.
+    const pattern = /^const\s+(\w+)\s*=\s*(.+?);(?:\s*\/\/\s*(.*))?$/;
+    for (const raw of block.split('\n')) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        const m = pattern.exec(line);
+        if (!m) continue;
+
+        let defaultValue = m[2].trim();
+        if ((defaultValue.startsWith('"') && defaultValue.endsWith('"')) ||
+            (defaultValue.startsWith("'") && defaultValue.endsWith("'"))) {
+            defaultValue = defaultValue.slice(1, -1);
+        }
+
+        let type;
+        if (/^-?\d+$/.test(defaultValue)) type = 'int';
+        else if (defaultValue.includes('.') && !isNaN(Number(defaultValue))) type = 'float';
+        else if (defaultValue.toLowerCase() === 'true' || defaultValue.toLowerCase() === 'false') type = 'bool';
+        else type = 'string';
+
+        entries.push({
+            key: m[1],
+            type: type,
+            defaultValue: defaultValue,
+            comment: m[3] === undefined ? null : m[3].trim()
+        });
+    }
+    return entries;
+}
+
+/** Sora's formatForJS: a number or bool stays bare, anything else becomes a quoted string. */
+function formatForJS(value) {
+    const t = value.trim();
+    // The emptiness guard is load-bearing and is not a JS/Swift detail I should
+    // have to think about twice: Number("") is 0, so without it the empty default
+    // would be written out as `const KEY = ;`. Swift's Double("") is nil, so the
+    // real app quotes it.
+    if (t.length > 0 && !isNaN(Number(t))) return t;
+    const lower = t.toLowerCase();
+    if (lower === 'true' || lower === 'false') return lower;
+    const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return '"' + escaped + '"';
+}
+
+/** Sora's write-back: substitute the user's value into the module's own script. */
+function writeSettingsToFile(source, overrides) {
+    let content = source;
+    for (const [key, value] of Object.entries(overrides)) {
+        const re = new RegExp('^(\\s*)const\\s+' + key + '\\s*=\\s*.*?;(.*)$', 'gm');
+        content = content.replace(re, (all, indent, tail) =>
+            indent + 'const ' + key + ' = ' + formatForJS(value) + ';' + tail);
+    }
+    return content;
 }
 
 function readManifest(moduleDir) {
@@ -390,6 +472,8 @@ module.exports = {
     loadSource: loadSource,
     readManifest: readManifest,
     readFixtures: readFixtures,
+    parseSettingsSchema: parseSettingsSchema,
+    writeSettingsToFile: writeSettingsToFile,
     hostParseSearch: hostParseSearch,
     hostParseEpisodes: hostParseEpisodes,
     hostParseDetails: hostParseDetails,

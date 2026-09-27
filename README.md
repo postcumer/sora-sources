@@ -142,11 +142,12 @@ empty result set, a post with no thumbnail, and a page publishing no stream.
   target.
 - **hanime.tv, sxyprn.com, pornhub.com** — assessed, not built, and why:
   [`PROVIDERS.md`](PROVIDERS.md).
-- **Six issues in the host apps** found while building against Sora, Luna and SoraCore, each
-  with file and line references: [`UPSTREAM-REPORT.md`](UPSTREAM-REPORT.md). The most
-  consequential is that the download path drops per-source headers, so a module can stream
-  successfully and still fail to download with a 403 — worked around at the manifest level
-  (§6.1.1), not fixed in the app.
+- **Seven issues in the host apps** found while building against Sora, Luna and SoraCore, each
+  with file and line references: [`UPSTREAM-REPORT.md`](UPSTREAM-REPORT.md). The download path
+  dropping per-source headers is the most consequential — a module can stream successfully and
+  still fail to download with a 403 (§6.1.1). Issue 7 is the one that shaped these modules
+  most: the settings screen can render a menu of options, but its only producer hardcodes
+  `options: nil`, so a module can have a switch or a text field and nothing else (§3.1.1).
 
 ---
 

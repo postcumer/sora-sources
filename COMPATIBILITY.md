@@ -258,6 +258,57 @@ This is the **only** settings mechanism, and it constrains how a module may be w
 of the file, one per line, each ending in `;`, none containing a `;` inside the value. Never
 place a `const` with a semicolon-bearing value elsewhere in the file.
 
+#### 3.1.1 This is the only UI a module can own
+
+The rewriter above is not just a config file. It is backed by a real settings screen, and it
+is **the only user-facing surface a module has**. That is worth stating precisely, because the
+rest of the host looks like it should offer more.
+
+`ModuleManager.parseSettingsSchema` (`ModuleSettings.swift:120-167`) scans the script for the
+literal markers `// Settings start` and `// Settings end`, then takes one setting per
+
+```
+^const\s+(\w+)\s*=\s*(.+?);(?:\s*//\s*(.*))?$
+```
+
+The trailing `//` comment is the setting's caption; the `const` name is the row title. The
+entries are rendered by `ModuleSettingsView` — reached from **Settings → Modules → tap the
+module**, not from the search screen — and saving writes the value back into the module's own
+script, so the new value is live on the next load.
+
+The control is chosen by inferring a type from the literal:
+
+| Declared as | Rendered as |
+|---|---|
+| `const X = true;` | a **Toggle** |
+| `const X = 5;` | a number text field |
+| `const X = 1.5;` | a decimal text field |
+| `const X = "…";` | a text field |
+| `const X = latest;` | a text field (bare word is a string) |
+
+So: **a switch, or a text field. There is no dropdown.** `ModuleSetting` carries an
+`options: [String]?` and `ModuleSettingsView.swift:189-203` renders it as a `Menu` of buttons —
+exactly the row of tappable options one would want here — but `parseSettingsSchema` is the only
+producer of `ModuleSetting` and it hardcodes `options: nil` at line 161. That branch is
+unreachable. It is the third piece of dead code in this host after `streamAsyncJS` and
+`multiStream`, and the most costly, because it is the one that would have made this section
+about buttons rather than text fields.
+
+**Nothing else is available.** Verified, not assumed:
+
+- `ModuleMetadata` (`Modules.swift:10-33`) has 17 fields. All are descriptive or player flags;
+  none renders a view.
+- The JS context injects only `console`, `log`, `fetchNative`, `fetchV2Native`, `networkFetch*`,
+  `btoa`, `atob` and a handful of pure string helpers
+  (`JavaScriptCore+Extensions.swift:383-392`). No DOM, no storage, no view.
+- The only two call sites for `searchResults` are `SearchView.swift:269/281` and
+  `AniListLibraryMatchView.swift:243`, both keyword-driven.
+
+**So a module cannot put a button in the search bar.** A module that wants a user-visible
+choice sets a `const` in a settings block and asks the user to change it once. See
+`modules/pornmz/` for the one place these modules do that, and why the value is a string
+naming an ordering rather than a bool.
+
 ### 3.2 Updates
 
 `refreshModules` re-fetches each manifest and re-downloads the script **only if

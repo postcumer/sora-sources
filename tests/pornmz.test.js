@@ -24,11 +24,12 @@ const STREAM_URL =
     'https://video.twimg.com/amplify_video/2103925197430546432/pl/LPYC0fG2Xdm6ncFL.m3u8';
 
 /** Fresh module + fixtures. Each test gets its own context so the page cache
- *  and its TTL never leak between cases. */
-function load(extraRoutes) {
+ *  and its TTL never leak between cases. `settings` is the value the user would
+ *  have saved in the app's settings screen, applied through the real rewriter. */
+function load(extraRoutes, settings) {
     const routes = h.readFixtures(FIXTURE_DIR);
     Object.keys(extraRoutes || {}).forEach((k) => { routes[k] = extraRoutes[k]; });
-    return h.loadModule(MODULE_DIR, routes);
+    return h.loadModule(MODULE_DIR, routes, settings);
 }
 
 /** Count of network calls actually issued — the anti-regression check for the
@@ -427,6 +428,99 @@ test('streams: the Referer is derived from the playlist, not hardcoded', async (
         h.hostParseStream(await ctx.context.extractStreamUrl(url)));
     test.equal(options[0].headers.Referer, 'https://cdn.example.net',
         'follows whatever host serves the playlist');
+});
+
+// ---------------------------------------------------------------------------
+// Settings — the module's only user-facing control
+// ---------------------------------------------------------------------------
+
+test('settings: Sora finds a settings screen for this module', () => {
+    // If this ever returns [], the module has no controls at all and every
+    // browse claim in the README is false. Parsed with a transcription of
+    // parseSettingsSchema, not a regex written to suit the module.
+    const source = require('fs').readFileSync(path.join(MODULE_DIR, 'module.js'), 'utf8');
+    const schema = h.parseSettingsSchema(source);
+    test.equal(schema.length, 1, 'exactly one setting is exposed');
+    test.equal(schema[0].key, 'BROWSE_ORDER', 'and it is the browse order');
+    test.equal(schema[0].type, 'string',
+        'a text field — the parser only makes a switch out of a literal true/false');
+    test.equal(schema[0].defaultValue, '', 'empty by default, so shipping behaviour is unchanged');
+    test.ok(schema[0].comment && schema[0].comment.length > 20,
+        'it carries a comment, which is the only place the row can explain itself');
+});
+
+test('settings: the saved value reaches the running module', async () => {
+    // The whole point of the settings screen: the user sets it once, the app
+    // rewrites the const in the module's own script, and every later call sees
+    // the new value. If the rewriter could not match the line this would fail.
+    const ctx = load(browseFixture(), { BROWSE_ORDER: 'oldest' });
+    await ctx.context.searchResults('anything at all');
+    test.includes(ctx.calls[0].url, 'order=asc', 'the saved value is in effect');
+});
+
+test('settings: choosing an order makes every search browse the archive', async () => {
+    // This is the part that does not require typing anything: the user picks
+    // "oldest" once in the settings screen and from then on the search box
+    // browses, whatever is in it.
+    for (const [setting, expected] of [['oldest', 'order=asc'], ['newest', 'order=desc'],
+                                       ['latest', 'order=desc'], ['recent', 'order=desc']]) {
+        const ctx = load(browseFixture(), { BROWSE_ORDER: setting });
+        const parsed = h.hostParseSearch(await ctx.context.searchResults('milf'));
+        test.equal(parsed.items.length, 2, JSON.stringify(setting) + ' browses');
+        test.includes(ctx.calls[0].url, expected, JSON.stringify(setting) + ' orders correctly');
+        test.equal(ctx.calls[0].url.indexOf('search='), -1,
+            JSON.stringify(setting) + ' carries no search term');
+    }
+});
+
+test('settings: the choice is case- and space-insensitive', async () => {
+    // The user types into a free text field, so "  Oldest " has to work.
+    for (const typed of ['Oldest', '  OLDEST  ', 'Newest']) {
+        const ctx = load(browseFixture(), { BROWSE_ORDER: typed });
+        await ctx.context.searchResults('x');
+        test.includes(ctx.calls[0].url, typed.trim().toLowerCase() === 'oldest' ? 'order=asc' : 'order=desc',
+            JSON.stringify(typed) + ' is understood');
+    }
+});
+
+test('settings: an unrecognised value is ignored rather than breaking search', async () => {
+    // The field accepts anything. A typo must not turn every search into a
+    // browse of nothing — it falls back to normal text search instead.
+    for (const typed of ['popuar', 'newestt', 'desc', '??']) {
+        const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=' + encodeURIComponent('milf') +
+            '&per_page=20&_embed=wp:featuredmedia';
+        const ctx = load({ [url]: { status: 200, body: '[]' } }, { BROWSE_ORDER: typed });
+        await ctx.context.searchResults('milf');
+        test.includes(ctx.calls[0].url, 'search=milf',
+            JSON.stringify(typed) + ' leaves normal search working');
+    }
+});
+
+test('settings: popularity words in the settings field are refused too', async () => {
+    // Same rule as the keywords, and the same reason: the provider publishes no
+    // popularity signal, so a setting that accepted "popular" would show the
+    // newest posts under a label that does not mean it.
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=milf&per_page=20&_embed=wp:featuredmedia';
+    const ctx = load({ [url]: { status: 200, body: '[]' } }, { BROWSE_ORDER: 'popular' });
+    await ctx.context.searchResults('milf');
+    test.includes(ctx.calls[0].url, 'search=milf', '"popular" does not silently mean "newest"');
+});
+
+test('settings: clearing the field restores ordinary search', async () => {
+    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=milf&per_page=20&_embed=wp:featuredmedia';
+    const ctx = load({ [url]: { status: 200, body: '[]' } }, { BROWSE_ORDER: '' });
+    await ctx.context.searchResults('milf');
+    test.includes(ctx.calls[0].url, 'search=milf', 'the shipped default is plain search');
+});
+
+test('settings: keywords still work while a browse order is set', async () => {
+    // The two mechanisms compose rather than fight: the setting is an override
+    // for the whole screen, and a typed keyword is still honoured when the
+    // override agrees with it.
+    const ctx = load(browseFixture(), { BROWSE_ORDER: 'newest' });
+    await ctx.context.searchResults('oldest');
+    test.includes(ctx.calls[0].url, 'order=desc',
+        'the setting wins over the typed keyword, predictably rather than at random');
 });
 
 test('downloads: the manifest baseUrl is the host the CDN will answer', async () => {

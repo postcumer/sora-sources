@@ -138,26 +138,35 @@ for (const dir of dirs) {
 
     test(name + ': top-level consts are safe for the settings rewriter', () => {
         // ModuleManager.writeSettingsToFile substitutes overrides with
-        //   ^(\s*)const\s+KEY\s*=\s*.*?;(.*)$
-        // Non-greedy up to the first semicolon: a const whose value contains one
-        // is cut in half and the script stops parsing. Caught here, not on device.
+        //   ^(\s*)const\s+KEY\s*=\s*.*?;(.*)$      (anchorsMatchLines)
+        // `.*?` is non-greedy, so the value ends at the FIRST semicolon and
+        // everything after it is kept verbatim. Two ways to break it: no
+        // semicolon at all (the line never matches), or a semicolon inside the
+        // value (the rewrite lands mid-literal and the script stops parsing).
+        //
+        // A trailing `// comment` is explicitly fine — it is the semicolon's
+        // group `(.*)`, preserved across a rewrite, and it is how a settings row
+        // gets its caption. An earlier revision of this linter rejected any line
+        // not ending in `;` and so forbade the one form that actually works.
         const source = fs.readFileSync(path.join(dir, 'module.js'), 'utf8');
-        const lines = source.split('\n');
         const problems = [];
 
-        lines.forEach((line, i) => {
+        source.split('\n').forEach((line, i) => {
             const match = /^(\s*)const\s+([A-Za-z_$][\w$]*)\s*=\s*(.*)$/.exec(line);
             if (!match) return;
-            const value = match[3];
-            if (!/;\s*$/.test(line)) {
+            const rest = match[3];
+            const semi = rest.indexOf(';');
+
+            if (semi === -1) {
                 problems.push('line ' + (i + 1) + ': const ' + match[2] +
-                    ' has no trailing semicolon — the settings rewriter will not match it');
+                    ' has no semicolon — the rewriter will not match this line');
+                return;
             }
-            // Everything before the final semicolon is what the rewriter keeps.
-            const beforeFinal = value.replace(/;\s*$/, '');
-            if (beforeFinal.indexOf(';') !== -1) {
+            const after = rest.slice(semi + 1).trim();
+            if (after !== '' && !after.startsWith('//')) {
                 problems.push('line ' + (i + 1) + ': const ' + match[2] +
-                    ' contains a semicolon inside its value — the rewriter truncates it');
+                    ' has text after its first ";" that is not a comment ("' + after +
+                    '") — the rewriter keeps that text and truncates the value');
             }
         });
 

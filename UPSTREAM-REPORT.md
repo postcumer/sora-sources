@@ -186,6 +186,58 @@ module author an afternoon, and aligning the two would remove the footgun entire
 
 ---
 
+## 7. The settings screen can render a menu of options, but nothing can ever produce one
+
+**Where:** `Utlis & Misc/Modules/ModuleSettingsView.swift:189-203` (the consumer) and
+`Utlis & Misc/Modules/ModuleSettings.swift:161` (the only producer).
+
+A module's settings screen is the only user-facing surface a module has — Sora builds it from
+`const` declarations between `// Settings start` and `// Settings end` in the module script,
+renders one control per entry, and writes the user's choice back into that script
+(`ModuleManager.swift:266`). So it is worth being precise about what it can render.
+
+`ModuleSetting` carries `options: [String]?`, and `ModuleSettingRow.control` renders it as a
+`Menu` of tappable buttons:
+
+```swift
+if let options = setting.options, !options.isEmpty {
+    Menu {
+        ForEach(options, id: \.self) { option in
+            Button(option) { setting.value = option }
+        }
+    } label: { … }
+}
+```
+
+That is exactly the right control for a module offering a fixed list of choices — a browse
+menu of "Latest / Newest / Oldest", for instance. It can never appear.
+`getModuleSettings` is the only caller, and the only `ModuleSetting` in the codebase is built
+at `ModuleSettings.swift:71` from `parseSettingsSchema`, which hardcodes:
+
+```swift
+let entry = ModuleSettingSchemaEntry(
+    key: key, type: type, comment: comment,
+    defaultValue: defaultValue,
+    options: nil            // <-- never populated
+)
+```
+
+`ModuleSettingSchemaEntry` is `Codable` and has an `options` field that nothing ever decodes
+into it, so the wiring was clearly intended and the producer was left unfinished.
+
+**Consequence:** a module can only ever get a `Toggle` or a text field. A fixed set of
+options is inexpressible, and the workaround every module is pushed into is to make the user
+type a keyword. That is why the pornmz module's browse control is a string setting
+(`BROWSE_ORDER = "newest" | "oldest"`) rather than a menu — see `modules/pornmz/README.md` and
+`COMPATIBILITY.md` §3.1.1.
+
+**Suggested fix:** parse the trailing `//` comment of a settings line for a delimited option
+list, e.g. `const BROWSE_ORDER = "newest"; // newest | oldest`, and pass it through as
+`options`. The comment is already parsed and already reaches the UI as a caption, so this
+needs no manifest change and no new file.
+
+---
+
 ## Observed but not diagnosed
 
 - `PiP failed to start: Failed to start picture in picture.` — repeated throughout a session.

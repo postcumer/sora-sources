@@ -10,7 +10,7 @@ points — but Luna is **not** a supported target right now; see `../../COMPATIB
 | | |
 |---|---|
 | Search | WordPress REST API, one request |
-| Browse | Type `latest` or `oldest` — see *Browsing* below |
+| Browse | A setting in the module's own settings screen, or the keywords `latest` / `oldest` |
 | Episodes | One post = one standalone video |
 | Sources | The HLS playlist published in the page's own microdata |
 | Quality | Up to 1080p (measured — see below) |
@@ -19,7 +19,15 @@ points — but Luna is **not** a supported target right now; see `../../COMPATIB
 
 ## Browsing
 
-Search for a keyword and the module returns a listing instead of matching text:
+**The main way to browse: one setting, set once.** Go to **Settings → Modules → pornmz** and
+set `BROWSE_ORDER` to `newest` or `oldest`. From then on the search box browses the whole
+archive in that order, whatever you type — including nothing at all. Set it back to an empty
+value to return to ordinary search.
+
+That field is a **real control rendered by the app**, and it is the only kind of control a
+module can have (see *Why the control is a text field* below).
+
+**The other way: type a keyword.**
 
 | Type this | You get |
 |---|---|
@@ -33,27 +41,48 @@ GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_
 GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=asc&_embed=wp:featuredmedia
 ```
 
-**There are no on-screen buttons for this, and a module cannot add any.** This is worth being
-blunt about, because "no options for home / latest / oldest / popular in Sora" is the symptom of
-a platform limit rather than a gap in this module:
+**There are no buttons in the search bar, and a module cannot add any.** This is worth being
+precise about, because "no options for home / latest / oldest / popular in Sora" is a platform
+limit rather than a gap in this module. Verified against the source, not assumed:
 
-- A module is a **script**. The engine injects four functions and takes their return values. It
-  has no DOM, no view, and no way to contribute a tab, a chip row, or a segmented control.
-  Adding one would mean editing the app, not the module.
-- Sora's `ContentView.swift` defines exactly four tabs — Library, Downloads, Settings, Search.
-  There is no home tab for a module's front page to fill.
-- `SearchView.swift:243` guards on `!searchQuery.isEmpty`, so the module is not even *called*
-  until something is typed.
+- A module is a **script**. `setupJavaScriptEnvironment()`
+  (`JavaScriptCore+Extensions.swift:383-392`) injects `console`, `fetch`, `base64` and some
+  string helpers — no DOM, no view, no way to contribute a control.
+- All 17 fields of `ModuleMetadata` (`Modules.swift:10-33`) are descriptive or player flags.
+  Not one renders anything.
+- Sora has no home tab — `ContentView.swift` defines exactly Library, Downloads, Settings,
+  Search — and `SearchView.swift:243` guards on `!searchQuery.isEmpty`, so the module is not
+  even called until something is typed.
+- The only two call sites for `searchResults` in the entire app are `SearchView.swift:269/281`
+  and `AniListLibraryMatchView.swift:243`. Both need a keyword.
 
-So the user-facing affordance is the search field itself, and the keyword is the option. That
-is a workaround for a missing platform feature, not a design preference.
+The one surface a module *does* own is a settings screen built from `const` declarations in the
+script — which is what `BROWSE_ORDER` is. `../../COMPATIBILITY.md` §3.1.1 has the full
+mechanism and the file references.
 
-**Only recency words are mapped.** `popular`, `trending`, `top` and `best` deliberately fall
-through to a real text search. This is checked rather than assumed — the REST API rejects
+### Why the control is a text field and not a switch
+
+`ModuleSettingsView` infers a control type from the literal it finds, and only `true`/`false`
+becomes a switch. So the value is a string naming an ordering, and the row is labelled by the
+`const` name with my comment underneath as the caption.
+
+There *is* a `Menu`-of-buttons branch in that view (`ModuleSettingsView.swift:189-203`) that
+would be exactly right for a browse list — but `parseSettingsSchema` is the only code that
+builds those settings and it hardcodes `options: nil` (`ModuleSettings.swift:161`), so the
+branch is unreachable. That is a host bug, reported in `../../UPSTREAM-REPORT.md`; it is the
+one change that would turn this section from a text field into buttons.
+
+### Why popularity is not an option
+
+`popular`, `trending`, `top` and `best` are not accepted as keywords, and typing `popular` into
+the setting does nothing. This is checked rather than assumed — the REST API rejects
 `orderby=comment_count` outright (HTTP 400, `Invalid parameter(s): orderby`), posts carry no
 view count, and the only orderings it accepts are `date`, `modified`, `id` and `title`. There
 is no popularity signal here at all, so answering "popular" with the newest posts would put a
 confident label on data that does not mean it. A browse that lies is worse than no browse.
+
+An unrecognised value in the setting is ignored rather than honoured, so a typo leaves normal
+search working instead of silently browsing nothing.
 
 Words are matched **whole**, so `latest milf` is an ordinary search, not a browse.
 

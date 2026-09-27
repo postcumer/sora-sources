@@ -30,6 +30,25 @@
  * the canonical version and tests/net.test.js covers it.
  */
 
+// Settings start
+//
+// Sora builds a settings screen for this module out of the `const` declarations
+// between these two markers: `parseSettingsSchema` (ModuleSettings.swift:120) scans
+// for exactly these comments, `ModuleSettingsView` renders one control per entry,
+// and `writeSettingsToFile` (ModuleManager.swift:266) writes the edited value back
+// into this script so it takes effect on the next load.
+//
+// This is the ONLY user-facing control a module can own. The engine injects no view
+// (JavaScriptCore+Extensions.swift:383-392 gives us console, fetch, base64 and string
+// helpers, nothing else), the 17 fields of ModuleMetadata all render nothing, and the
+// search screen has no module-driven surface. So the browse choice lives here rather
+// than on a button in the search bar — see COMPATIBILITY.md §3.1.1.
+//
+// A string rather than a bool: the parser infers type from the literal, and only
+// "true"/"false" becomes a switch. A text field can name either honest ordering.
+const BROWSE_ORDER = ""; // Type "newest" or "oldest" to make every search browse the whole archive in that order, ignoring the typed text. Leave this empty to search normally.
+// Settings end
+
 var BASE_URL = "https://pornmz.com";
 var SEARCH_ENDPOINT = "/wp-json/wp/v2/posts";
 var SEARCH_LIMIT = 20;
@@ -73,6 +92,23 @@ var BROWSE_KEYWORDS = {
     "old": "asc",
     "oldest first": "asc"
 };
+
+/**
+ * The browse chosen in the settings screen, or "" when there is none.
+ *
+ * Ignored unless it names a browse this provider can answer honestly, so a typo
+ * in the settings field cannot silently turn every search into a browse of
+ * nothing — the module falls back to normal text search instead. The value comes
+ * back from the file as a string literal, but guard anyway: the field is a free
+ * text box and a user can put anything in it.
+ */
+function browseOverride() {
+    if (typeof BROWSE_ORDER !== "string") {
+        return "";
+    }
+    var chosen = BROWSE_ORDER.trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(BROWSE_KEYWORDS, chosen) ? chosen : "";
+}
 
 // ---------------------------------------------------------------------------
 // Network
@@ -270,7 +306,10 @@ function metaContent(html, itemprop) {
  * user chooses is the only way in.
  */
 function searchResults(keyword) {
-    var query = String(keyword === undefined || keyword === null ? "" : keyword).trim();
+    // A browse chosen in the module's settings screen overrides the typed text.
+    // Empty by default, so the shipped behaviour is exactly what it was: search
+    // what was typed, and browse only on a keyword.
+    var query = browseOverride() || String(keyword === undefined || keyword === null ? "" : keyword).trim();
     if (!query) {
         return Promise.resolve("[]");
     }
