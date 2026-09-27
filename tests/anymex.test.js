@@ -511,4 +511,139 @@ test('contract: logs never carry a response body', async () => {
     test.equal(logged.indexOf(secret), -1, 'the body is not in the log');
 });
 
+// --- the install catalogue -------------------------------------------------
+
+const CATALOGUE = path.join(__dirname, '..', 'anymex', 'index.json');
+const REPO_META = path.join(__dirname, '..', 'anymex', 'repo.json');
+
+/**
+ * Dart's String.hashCode, which is what the extension project's own model uses
+ * to derive a source id when the catalogue does not carry one. Jenkins
+ * one-at-a-time over the UTF-16 code units, masked to 31 bits, with 0 promoted
+ * to 1. Written out here because the value is only meaningful if it is
+ * reproducible, and reproducing it is the whole reason this file can be tested.
+ */
+function dartStringHash(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+        hash += text.charCodeAt(i);
+        hash += hash << 10;
+        hash ^= hash >>> 6;
+    }
+    hash += hash << 3;
+    hash ^= hash >>> 11;
+    hash += hash << 15;
+    hash &= 0x7fffffff;
+    return hash === 0 ? 1 : hash;
+}
+
+function readJson(file) {
+    return JSON.parse(require('fs').readFileSync(file, 'utf8'));
+}
+
+test('catalogue: a valid non-empty array', () => {
+    const catalogue = readJson(CATALOGUE);
+    test.equal(Array.isArray(catalogue), true, 'index.json is an array');
+    test.equal(catalogue.length > 0, true, 'the catalogue is not empty');
+    test.equal(
+        catalogue.every((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)),
+        true,
+        'every entry is an object'
+    );
+});
+
+test('catalogue: one entry per source, and the names line up', () => {
+    const catalogue = readJson(CATALOGUE);
+    const declared = load().manifest;
+    test.equal(catalogue.length, 1, 'one catalogue entry per source file');
+    const entry = catalogue[0];
+    test.equal(entry.name, declared.name, 'name matches mangayomiSources');
+    test.equal(entry.baseUrl, declared.baseUrl, 'baseUrl matches mangayomiSources');
+    test.equal(entry.lang, declared.lang, 'lang matches mangayomiSources');
+    test.equal(entry.version, declared.version, 'version matches mangayomiSources');
+    test.equal(entry.iconUrl, declared.iconUrl, 'iconUrl matches mangayomiSources');
+    test.equal(entry.apiUrl, declared.apiUrl, 'apiUrl matches mangayomiSources');
+    test.equal(entry.itemType, declared.itemType, 'itemType matches mangayomiSources');
+    test.equal(entry.isNsfw, declared.isNsfw, 'isNsfw matches mangayomiSources');
+    test.equal(entry.isNsfw, true, 'the source is flagged, not disguised');
+});
+
+test('catalogue: the entry is JavaScript and video, and the host reads it as such', () => {
+    const entry = readJson(CATALOGUE)[0];
+    // The app's enum is {dart, javascript, mihon, lnreader, aidoku}.
+    test.equal(entry.sourceCodeLanguage, 1, 'sourceCodeLanguage is javascript');
+    // The app's enum is {manga, anime, novel}, and this source is a video one.
+    test.equal(entry.itemType, 1, 'itemType is anime');
+    test.equal(entry.isManga, false, 'isManga agrees with itemType');
+    test.equal(path.basename(SOURCE), 'pornmz.js', 'the entry describes the source under test');
+});
+
+test('catalogue: the id is the one the derivation formula produces', () => {
+    const entry = readJson(CATALOGUE)[0];
+    // The extension project's model derives: 'mangayomi-js-"<lang>"."<name>"'.hashCode
+    // when sourceCodeLanguage is not 0. Deriving it here rather than trusting
+    // the literal means a renamed source or a typo in the id fails the suite.
+    const derived = dartStringHash('mangayomi-js-"' + entry.lang + '"."' + entry.name + '"');
+    test.equal(entry.id, derived, 'the id re-derives from lang and name');
+    test.equal(entry.id, 2086949404, 'and it is the value that was reviewed');
+    test.equal(entry.id > 0 && entry.id <= 0x7fffffff, true, 'the id is a positive 31-bit int');
+});
+
+test('catalogue: the id would still be right if it were left out', () => {
+    // Worth pinning because it is the fallback the app uses, and because it
+    // shows the id is a convenience rather than something the load depends on.
+    const entry = readJson(CATALOGUE)[0];
+    const withoutId = {...entry};
+    delete withoutId.id;
+    const derived = dartStringHash('mangayomi-js-"' + withoutId.lang + '"."' + withoutId.name + '"');
+    test.equal(derived, entry.id, 'the formula does not depend on the stored id');
+});
+
+test('catalogue: the code URL points at this source in this repository', () => {
+    const entry = readJson(CATALOGUE)[0];
+    test.equal(typeof entry.sourceCodeUrl, 'string', 'sourceCodeUrl is a string');
+    test.equal(entry.sourceCodeUrl.indexOf('https://'), 0, 'sourceCodeUrl is https');
+    test.equal(
+        /raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/anymex\/pornmz\.js$/.test(entry.sourceCodeUrl),
+        true,
+        'sourceCodeUrl is a raw URL for anymex/pornmz.js in a repository'
+    );
+    test.equal(/\/main\//.test(entry.sourceCodeUrl), true, 'on the main branch');
+    test.equal(/\/master\//.test(entry.sourceCodeUrl), false, 'not a stale branch name');
+});
+
+test('catalogue: the optional fields the host reads are present and sane', () => {
+    const entry = readJson(CATALOGUE)[0];
+    test.equal(entry.hasCloudflare, false, 'hasCloudflare is stated, not omitted');
+    test.equal(typeof entry.dateFormat, 'string', 'dateFormat is a string');
+    test.equal(typeof entry.dateFormatLocale, 'string', 'dateFormatLocale is a string');
+    test.equal(typeof entry.additionalParams, 'string', 'additionalParams is a string');
+    test.equal(typeof entry.appMinVerReq, 'string', 'appMinVerReq is set');
+    test.equal(entry.typeSource, 'single', 'typeSource is single');
+});
+
+test('catalogue: no credentials of any kind', () => {
+    const text = require('fs').readFileSync(CATALOGUE, 'utf8');
+    for (const pattern of [/api[_-]?key/i, /bearer\s/i, /authorization/i, /cookie/i, /password/i, /token\s*[:=]/i]) {
+        test.equal(pattern.test(text), false, 'no ' + pattern + ' in the catalogue');
+    }
+});
+
+test('repo.json: names the repository so it is not called after the URL', () => {
+    const meta = readJson(REPO_META);
+    const name = (meta.meta && meta.meta.name) || meta.name;
+    const website = (meta.meta && meta.meta.website) || meta.website;
+    test.equal(typeof name, 'string', 'the repository has a name');
+    test.equal(name.endsWith('.json'), false, 'the name is not a filename');
+    test.equal(name.length > 0, true, 'the name is not empty');
+    test.equal(typeof website, 'string', 'the repository has a website');
+    test.equal(website.indexOf('https://'), 0, 'the website is https');
+});
+
+test('repo.json: carries no v2 index redirect', () => {
+    // getRepoInfos follows index_v2 and ignores this catalogue entirely.
+    const meta = readJson(REPO_META);
+    test.equal(meta.index_v2, undefined, 'no index_v2 redirect');
+});
+
 test.run();

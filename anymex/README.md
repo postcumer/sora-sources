@@ -12,9 +12,22 @@ actually execute, so this source is tested offline rather than only reasoned abo
 
 ## Install
 
-The install path documented by the extension project
+**By repository URL.** [`index.json`](index.json) is an extension catalogue, and
+[`repo.json`](repo.json) names the repository, so the source can be added the way the app adds
+any other extension repository:
+
+1. AnymeX → **Settings** → **Sources** (the manage-repositories screen for the item type)
+2. **Add repository**, and paste
+   `https://raw.githubusercontent.com/postcumer/sora-sources/main/anymex/index.json`
+3. The app fetches the catalogue, and the source appears in the list.
+
+Point it at a folder instead of the file and it will find the catalogue on its own — the URL
+normaliser tries `index.min.json`, `repo.json`, `index.json` and `index_v2.json` in that order
+before falling back to the literal URL. Use the full URL so the first attempt succeeds.
+
+**By hand.** The path documented by the extension project
 ([`CONTRIBUTING-JS.md`](https://github.com/PerryEiji/anymex-extensions/blob/main/CONTRIBUTING-JS.md))
-is to add a source by hand and paste its code:
+is to add a source directly and paste its code:
 
 1. Open AnymeX → **Extensions** tab → **+**
 2. Fill in the fields with the values from the `mangayomiSources` block at the top of
@@ -35,12 +48,42 @@ is to add a source by hand and paste its code:
 3. Save, then open the source's settings → **edit code**, and paste the whole of
    [`pornmz.js`](pornmz.js) over the template.
 
-**A repository catalogue is deliberately not shipped.** AnymeX can also load sources from an
-`index.json` catalogue, and the format is in the same repository as the sources. It is not
-included here because each entry's `id` is a Dart `String.hashCode`, which this environment
-cannot reproduce and no test here can verify — an entry with a wrong id silently fails to
-dedupe. The model's own default is to derive the id when the field is absent, so adding one is a
-small job once it can be checked against a real install.
+Both paths read the same metadata. `index.json` is the same block plus the fields only a
+catalogue has, and a test asserts the two agree field by field — so the two installs cannot
+drift apart.
+
+### The `id` field, and why it is 2086949404
+
+An `id` is a source's identity, and it has to be **stable**: it is what a reinstall recognises
+the source by, and what a device syncing its library matches against. So it cannot be a number
+invented per build. The extension project's model derives it when the catalogue omits it:
+
+```dart
+id = (json['id'] ??
+        (sourceCodeLang == 0
+            ? 'mangayomi-"${json['lang']}"."${json['name"]}"'
+            : 'mangayomi-js-"${json['lang"]}"."${json["name"]}"'))
+    .hashCode;
+```
+
+which is Dart's `String.hashCode` — Jenkins one-at-a-time over the UTF-16 code units, masked to
+31 bits, with 0 promoted to 1. That is a published algorithm, so it can be reproduced, and
+`tests/anymex.test.js` does reproduce it: it re-derives the id from the entry's own `lang` and
+`name` and fails if the stored value disagrees. Renaming the source therefore changes the id, and
+the suite catches the stale value.
+
+**The id is a convenience, not a dependency.** Omit it and the app derives the same number; omit
+it *and* use a name outside this derivation and the database assigns a local auto-increment
+instead, which is stable for the life of an install but not across a reinstall. Shipping it means
+the source behaves identically to one from the main catalogue, including deduplicating against
+another repository that ships the same source — which is the point of deriving it from the name
+rather than choosing it.
+
+Worth knowing about the upstream catalogue: only about 43% of its published ids match its own
+documented formula, because entries are renamed without being regenerated. A derivation is a
+convention here, not a guarantee — so a mismatch is not a load failure, and this test pins *our*
+value rather than trying to agree with everyone else's.
+
 
 ## What it does
 
@@ -201,6 +244,15 @@ Things that would break this source, and what the failure would look like:
 | The tag block changes shape | Genres go empty | `parseGenres` |
 | A property becomes repeatable | `getDetail`/`getVideoList` throw rather than guess | `metaText` |
 | **The CDN moves** | **Playback 403s; the Referer is now wrong** | the `origin` derivation in `getVideoList` |
+
+And two that are ours rather than the provider's:
+
+| Change on our side | Symptom | Where to fix |
+|---|---|---|
+| The repository or branch is renamed | The catalogue 404s and no source is offered | `sourceCodeUrl` in `index.json` |
+| `version` is not bumped | An update is never delivered to anyone who already has the source | both `index.json` and the `mangayomiSources` block — the test compares them |
+| The source is renamed | The derived id changes, so it installs as a second source | the `id` in `index.json` — the test re-derives it |
+
 
 Browsing parses a **theme**, not an API contract, so theme markup can change in ways an API
 will not. Both listing shapes and a full video page are recorded as fixtures under

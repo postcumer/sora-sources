@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Pornmz",
+    "id": 2086949404,
+    "baseUrl": "https://pornmz.com",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://pornmz.com",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": true,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/postcumer/sora-sources/main/anymex/pornmz.js",
+    "apiUrl": "",
+    "version": "1.0.0",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.2.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1
+  }
+]
