@@ -146,7 +146,7 @@ empty result set, a post with no thumbnail, and a page publishing no stream.
 - **[pornmz.com](modules/pornmz/)** — built and tested, at 1.4.0. Browse covers the site's four
   sorts and all 67 categories.
 - **[pornmz for AnymeX](anymex/)** — the same provider as a source extension for AnymeX / Mangayomi,
-  at 1.0.0. A different host with a different contract; the browse choice becomes real UI there
+  at 1.0.1. A different host with a different contract; the browse choice becomes real UI there
   rather than a text field, which is the one thing a Sora module cannot have. Ships an
   `index.json` catalogue, so it installs by repository URL as well as by paste. One file covers
   every platform, iOS included — the contract is identical, and a per-platform copy would install

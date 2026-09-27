@@ -83,14 +83,23 @@ test('source: the manifest fields AnymeX needs are present and honest', () => {
 // getPopular / getLatestUpdates
 // ---------------------------------------------------------------------------
 
-test('getPopular: asks the site for its own view ranking, not the newest posts', async () => {
-    // The whole reason this source is worth having. "Popular" has to be the
-    // provider's view-count ordering; answering it with the latest would put a
-    // confident label on data that does not mean it.
+test('getPopular: serves the newest listing, and asks for nothing else', async () => {
+    // The host shows this entry point unconditionally — tapping a source in the
+    // list opens it, and there is no supportsPopular flag to opt out of, only a
+    // commented-out one for Latest. The button cannot be removed from a source,
+    // so what the source controls is what sits behind it. It serves the newest
+    // listing. The view-count ranking is still one request away, as the "Popular"
+    // entry in the Sort filter.
     const ctx = load();
     const parsed = h.hostParseList(await ctx.instance.getPopular(1));
     test.true(parsed.ok, parsed.reason);
-    test.equal(ctx.calls[0].url, BASE + '/?filter=most-viewed');
+    test.equal(ctx.calls.length, 1, 'one request, no probing');
+    test.equal(ctx.calls[0].url, BASE + '/?filter=latest');
+    test.equal(
+        ctx.calls.some((c) => c.url.indexOf('most-viewed') !== -1),
+        false,
+        'the view ranking is not fetched behind the Popular button'
+    );
     test.equal(parsed.items.length, 3, 'every card in the fixture became a row');
     test.equal(parsed.dropped.length, 0, 'no card was dropped');
 });
@@ -498,7 +507,7 @@ test('contract: logs never carry a response body', async () => {
     // console. The source logs URLs and reasons; this checks it logs no more.
     const secret = 'A-VERY-LONG-UNIQUE-STRING-FROM-A-RESPONSE-BODY-918273645';
     const ctx = load({
-        [BASE + '/?filter=most-viewed']: {
+        [BASE + '/?filter=latest']: {
             status: 200,
             body: '<article><a href="' + BASE + '/video/id=pm1"><span class="title">' +
                 secret + '</span></a></article>'

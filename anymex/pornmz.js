@@ -5,7 +5,7 @@ const mangayomiSources = [{
     "apiUrl": "",
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://pornmz.com",
     "typeSource": "single",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "itemType": 1,
@@ -29,12 +29,19 @@ const mangayomiSources = [{
  * and the same 67 categories arrive as real controls:
  *
  *   Sora:  Settings -> Modules -> BROWSE_ORDER = "popular"
- *   AnymeX: the "Popular" button, and the Sort/Category filters
+ *   AnymeX: the Sort/Category filters
+ *
+ * The one control this source does not drive is the Popular entry point itself.
+ * The host shows it for every source and offers no way to switch it off, so
+ * there is nothing to delete; what a source decides is what it puts behind it,
+ * and it puts the newest listing there. The view-count ranking is still one tap
+ * away as the "Popular" entry in the Sort filter.
  *
  * The site is a WordPress install whose theme renders <article> cards on its
  * front page. Each card carries a title, a thumbnail, a link and a view count,
- * which is what makes the site's four `?filter=` sorts worth using: "popular" is
- * the provider's own view-count ranking, not one this source approximates.
+ * which is what makes the site's four `?filter=` sorts worth using: the
+ * "popular" sort is the provider's own view-count ranking, not one this source
+ * approximates.
  *
  * Every value below is taken from a page the site serves in the open. There is
  * no auth, no key, no cookie and no header beyond a Referer the CDN requires.
@@ -212,12 +219,17 @@ class DefaultExtension extends MProvider {
     }
 
     async getPopular(page) {
-        // The provider's own view-count ranking — the honest answer to
-        // "popular", and the one a Sora module could not reach at all.
+        // The host shows this unconditionally — tapping a source in the list
+        // opens it, and there is no supportsPopular flag to opt out of, only a
+        // commented-out one for Latest. So the button cannot be removed from a
+        // source; what a source controls is what it puts behind it. It serves
+        // the newest listing rather than the view-count ranking, at the user's
+        // request. The ?filter=most-viewed ranking is still reachable, and is
+        // still the "Popular" entry in the Sort filter below.
         if (page > 1) {
             return {list: [], hasNextPage: false};
         }
-        return this.listing(this.source.baseUrl + "/?filter=most-viewed");
+        return this.listing(this.source.baseUrl + "/?filter=latest");
     }
 
     async getLatestUpdates(page) {

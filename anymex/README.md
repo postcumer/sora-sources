@@ -40,7 +40,7 @@ is to add a source directly and paste its code:
    | Lang | `en` |
    | Icon URL | `https://www.google.com/s2/favicons?sz=128&domain=https://pornmz.com` |
    | Type | single |
-   | Version | `1.0.0` |
+   | Version | `1.0.1` |
    | Is anime | yes (not manga) |
    | NSFW | yes |
    | ApiUrl | leave empty |
@@ -139,7 +139,7 @@ one asserts the network is touched only through the injected `Client`.
 
 | | |
 |---|---|
-| Popular | The site's own view-count ranking, `?filter=most-viewed` |
+| Popular | The newest listing, `?filter=latest` — see below |
 | Latest | `?filter=latest` |
 | Search | WordPress REST API, paginated, or a listing when a filter is set |
 | Filters | The site's four sorts and all 67 of its categories |
@@ -147,6 +147,22 @@ one asserts the network is touched only through the injected `Client`.
 | Video | The HLS master plus its variants and audio renditions, with a Referer |
 | Auth | None. No keys, cookies or tokens anywhere in the source. |
 | `isNsfw` | `true` — flagged, not disguised |
+
+## The Popular entry point cannot be removed, only re-pointed
+
+**The button is the host's, not the source's.** Tapping a source in the list opens Popular, and
+that is unconditional: `_openPopular` pushes the home route with no check at all, and there is
+no `supportsPopular` flag. The contract has `supportsLatest` — and the host's own call to it is
+commented out anyway — but nothing equivalent for Popular. Every source in the list gets the
+button; there is nothing in a source that switches it off.
+
+So deleting it is not available. What a source does control is what sits behind it, and
+`getPopular` now serves `?filter=latest`, so the button shows the newest listing.
+
+**The view-count ranking is still there.** It was never removed, only moved off the button and
+onto the Sort filter, where **Popular** (`?filter=most-viewed`) is one of the four sorts. If you
+want the ranking, that is where it is; if you want the button gone, the host does not offer that
+to any source.
 
 ## The browse choice is better here than it was in Sora
 
@@ -164,7 +180,7 @@ arrive as real controls:
 
 | | Sora module | This source |
 |---|---|---|
-| Browse choice | A text field: `BROWSE_ORDER = "popular"` | The **Popular** button |
+| Browse choice | A text field: `BROWSE_ORDER = "popular"` | The Sort filter |
 | Newest | Type `latest` | The **Latest** button |
 | By runtime | Type `longest` | Sort filter → Longest |
 | By category | Type `cat:brazzers` | Category filter → Brazzers |
@@ -174,15 +190,17 @@ in prose. Here the Category filter is all 67, taken from the site's own REST API
 
 ## The two things that had to be got right
 
-**"Popular" has to mean popular.** An earlier revision of the Sora module asserted this provider
-had no popularity signal, on the grounds that the WordPress REST API rejects
-`orderby=comment_count` and posts carry no view count. Both statements are true and neither
-answers the question: the view counts live in the theme, on the card itself, and
-`?filter=most-viewed` is that field sorted descending. Measured live, twenty cards running
-629K → 414K → 398K → … → 174K.
+**The popularity signal is real, and it lives in the filter rather than the button.** An earlier
+revision of the Sora module asserted this provider had no popularity signal, on the grounds that
+the WordPress REST API rejects `orderby=comment_count` and posts carry no view count. Both
+statements are true and neither answers the question: the view counts live in the theme, on the
+card itself, and `?filter=most-viewed` is that field sorted descending. Measured live, twenty
+cards running 629K → 414K → 398K → … → 174K.
 
-So `getPopular` asks the site for its own ranking. It is not the newest posts wearing a
-confident label, and it is not an approximation sorted on the source's side.
+So the ranking is not approximated here and never was — asking the site for it is one request,
+and sorting twenty cards on this side would have been a guess wearing the same label. What
+changed is only where it is offered: the **Popular** entry in the Sort filter, not the Popular
+button, which the host owns.
 
 **The playlist needs a Referer, and the provider's own domain is the wrong one.** The playlist
 lives on a third-party CDN which answers **403** to a referer from pornmz.com and **200** to
