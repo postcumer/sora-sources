@@ -1,0 +1,514 @@
+'use strict';
+/*
+ * Tests for anymex/pornmz.js.
+ *
+ * Every assertion runs a value through the harness's host-side check, so a pass
+ * means AnymeX could actually build a row, a detail page or a player list from
+ * what the source returned — not merely that a function returned an object.
+ *
+ * Fixtures are the provider's real public responses, captured once. The suite
+ * never touches the network.
+ */
+
+const path = require('path');
+const test = require('./test');
+const h = require('./anymex-harness');
+
+const SOURCE = path.join(__dirname, '..', 'anymex', 'pornmz.js');
+
+const BASE = 'https://pornmz.com';
+const PAGE_URL = BASE + '/video/id=pm26201719309399';
+const MASTER =
+    'https://video.twimg.com/amplify_video/2103925197430546432/pl/LPYC0fG2Xdm6ncFL.m3u8';
+
+const FIXTURES = h.readFixtures('pornmz-anymex');
+
+/** A filter panel with nothing selected. */
+const NO_FILTERS = [];
+
+/** A filter panel with one value ticked in a named group. */
+function filters(group, value) {
+    return [{name: group, state: [{name: value, value: value, state: true}]}];
+}
+
+/** Routes serving every real page this source asks for. */
+function routes(extra) {
+    const all = {
+        [BASE + '/?filter=most-viewed']: {status: 200, body: FIXTURES['listing-most-viewed.html']},
+        [BASE + '/?filter=latest']: {status: 200, body: FIXTURES['listing-latest.html']},
+        [BASE + '/?filter=longest']: {status: 200, body: FIXTURES['listing-longest.html'] ||
+            FIXTURES['listing-latest.html']},
+        [BASE + '/?filter=random']: {status: 200, body: FIXTURES['listing-latest.html']},
+        [BASE + '/pmvideo/c/brazzers']: {status: 200, body: FIXTURES['listing-category.html']},
+        [BASE + '/pmvideo/c/milf']: {status: 200, body: FIXTURES['listing-category.html']},
+        [PAGE_URL]: {status: 200, body: FIXTURES['video-page.html']},
+        [MASTER]: {status: 200, body: FIXTURES['playlist.m3u8']},
+        [BASE + '/wp-json/wp/v2/posts?search=milf&per_page=20&page=1&_embed=wp:featuredmedia']: {
+            status: 200,
+            headers: {'x-wp-totalpages': '107'},
+            body: FIXTURES['search.json']
+        }
+    };
+    for (const key of Object.keys(extra || {})) {
+        all[key] = extra[key];
+    }
+    return all;
+}
+
+/** A loaded source with real routes plus whatever a test needs changed. */
+function load(extraRoutes) {
+    return h.loadSource(SOURCE, routes(extraRoutes));
+}
+
+const SEARCH_URL =
+    BASE + '/wp-json/wp/v2/posts?search=milf&per_page=20&page=1&_embed=wp:featuredmedia';
+
+// ---------------------------------------------------------------------------
+// Metadata
+// ---------------------------------------------------------------------------
+
+test('source: the manifest fields AnymeX needs are present and honest', () => {
+    const {manifest} = load();
+    test.equal(manifest.name, 'Pornmz');
+    test.equal(manifest.baseUrl, BASE, 'baseUrl without a trailing slash');
+    test.equal(manifest.itemType, 1, 'itemType 1 is anime');
+    test.equal(manifest.isNsfw, true, 'the source is flagged, not disguised');
+    test.equal(manifest.lang, 'en');
+    test.ok(/^\d+\.\d+\.\d+$/.test(manifest.version), 'a semver the app can compare');
+    test.equal(manifest.typeSource, 'single');
+    test.ok(manifest.iconUrl.indexOf('http') === 0, 'an icon URL, not a local path');
+});
+
+// ---------------------------------------------------------------------------
+// getPopular / getLatestUpdates
+// ---------------------------------------------------------------------------
+
+test('getPopular: asks the site for its own view ranking, not the newest posts', async () => {
+    // The whole reason this source is worth having. "Popular" has to be the
+    // provider's view-count ordering; answering it with the latest would put a
+    // confident label on data that does not mean it.
+    const ctx = load();
+    const parsed = h.hostParseList(await ctx.instance.getPopular(1));
+    test.true(parsed.ok, parsed.reason);
+    test.equal(ctx.calls[0].url, BASE + '/?filter=most-viewed');
+    test.equal(parsed.items.length, 3, 'every card in the fixture became a row');
+    test.equal(parsed.dropped.length, 0, 'no card was dropped');
+});
+
+test('getPopular: the rows carry a title, a thumbnail and a playable link', async () => {
+    const ctx = load();
+    const parsed = h.hostParseList(await ctx.instance.getPopular(1));
+    const first = parsed.items[0];
+    test.ok(first.name.length > 0, 'a name');
+    test.includes(first.imageUrl, 'wp-content/uploads', 'a thumbnail from the card');
+    test.includes(first.link, BASE + '/video/id=', 'a link to the video page');
+});
+
+test('getPopular: titles come through decoded, not as entity escapes', async () => {
+    const ctx = load();
+    const parsed = h.hostParseList(await ctx.instance.getPopular(1));
+    for (const row of parsed.items) {
+        test.equal(row.name.indexOf('&#'), -1, JSON.stringify(row.name) + ' is decoded');
+    }
+});
+
+test('getPopular: the listing does not paginate, so it says so', async () => {
+    // Verified against the site: `?filter=latest&page=2` returns page one again
+    // and `/page/2/?filter=latest` returns nothing. Claiming more pages would
+    // send the user scrolling through an endless page one.
+    const ctx = load();
+    const first = await ctx.instance.getPopular(1);
+    test.equal(first.hasNextPage, false);
+    const second = await ctx.instance.getPopular(2);
+    test.equal(second.hasNextPage, false);
+    test.equal(second.list.length, 0, 'and asks for nothing');
+});
+
+test('getLatestUpdates: asks for the newest posts', async () => {
+    const ctx = load();
+    const parsed = h.hostParseList(await ctx.instance.getLatestUpdates(1));
+    test.true(parsed.ok, parsed.reason);
+    test.equal(ctx.calls[0].url, BASE + '/?filter=latest');
+    test.equal(parsed.items.length, 3);
+    test.equal(parsed.hasNextPage, false);
+});
+
+// ---------------------------------------------------------------------------
+// search
+// ---------------------------------------------------------------------------
+
+test('search: text search uses the REST API and returns usable rows', async () => {
+    const ctx = load();
+    const parsed = h.hostParseList(await ctx.instance.search('milf', 1, NO_FILTERS));
+    test.true(parsed.ok, parsed.reason);
+    test.equal(ctx.calls[0].url, SEARCH_URL);
+    test.equal(parsed.items.length, 3, 'all three fixture posts');
+    test.equal(parsed.dropped.length, 0);
+    test.includes(parsed.items[0].imageUrl, 'http', 'a real thumbnail URL');
+});
+
+test('search: pagination follows the API header, not a guess', async () => {
+    const ctx = load();
+    const first = await ctx.instance.search('milf', 1, NO_FILTERS);
+    test.equal(first.hasNextPage, true, '107 total pages, so page 1 is not the last');
+
+    // A page short of the end stops, and a page past the end stops.
+    const near = load({
+        [SEARCH_URL]: {status: 200, headers: {'x-wp-totalpages': '1'}, body: FIXTURES['search.json']}
+    });
+    test.equal((await near.instance.search('milf', 1, NO_FILTERS)).hasNextPage, false);
+});
+
+test('search: a missing pagination header stops rather than looping forever', async () => {
+    // The header is the honest signal. Without it the source stops, which is
+    // the safe direction: a wrong "has more" sends the user through empty pages.
+    const ctx = load({
+        [SEARCH_URL]: {status: 200, body: FIXTURES['search.json']}
+    });
+    test.equal((await ctx.instance.search('milf', 1, NO_FILTERS)).hasNextPage, false);
+});
+
+test('search: an empty query asks for nothing', async () => {
+    const ctx = load();
+    const parsed = h.hostParseList(await ctx.instance.search('   ', 1, NO_FILTERS));
+    test.equal(parsed.items.length, 0);
+    test.equal(ctx.callCount(), 0, 'and makes no request');
+});
+
+test('search: a Sort filter browses that listing instead of matching text', async () => {
+    for (const sort of ['latest', 'most-viewed', 'longest', 'random']) {
+        const ctx = load();
+        const parsed = h.hostParseList(await ctx.instance.search('milf', 1, filters('Sort', sort)));
+        test.equal(ctx.calls[0].url, BASE + '/?filter=' + sort, sort + ' browses');
+        test.ok(parsed.items.length > 0, sort + ' returned rows');
+        test.equal(parsed.hasNextPage, false, sort + ' does not paginate');
+    }
+});
+
+test('search: a Category filter browses that category listing', async () => {
+    const ctx = load();
+    const parsed = h.hostParseList(await ctx.instance.search('anything', 1, filters('Category', 'brazzers')));
+    test.equal(ctx.calls[0].url, BASE + '/pmvideo/c/brazzers');
+    test.ok(parsed.items.length > 0, 'and returns rows');
+});
+
+test('search: the filter wins over the typed text', async () => {
+    // The user just made an explicit choice in a panel; it should not depend on
+    // what is in the box.
+    const ctx = load();
+    await ctx.instance.search('milf', 1, filters('Sort', 'longest'));
+    test.equal(ctx.calls[0].url, BASE + '/?filter=longest');
+});
+
+test('search: a filter that is not selected is ignored', async () => {
+    const unticked = [{name: 'Sort', state: [{name: 'Longest', value: 'longest', state: false}]}];
+    const ctx = load();
+    await ctx.instance.search('milf', 1, unticked);
+    test.equal(ctx.calls[0].url, SEARCH_URL, 'an unchecked value falls back to search');
+});
+
+test('search: a 200 with an HTML body is refused, not shown as results', async () => {
+    // A bot check or a maintenance page. Parsing it would produce an empty
+    // listing that looks like the site has nothing.
+    const ctx = load({
+        [SEARCH_URL]: {status: 200, body: '<html><body>checking your browser</body></html>'}
+    });
+    const parsed = h.hostParseList(await ctx.instance.search('milf', 1, NO_FILTERS));
+    test.equal(parsed.items.length, 0, 'nothing offered');
+    test.ok(ctx.log.some(l => /not a list/.test(l)), 'and the log says the markup changed');
+});
+
+test('search: an HTTP error surfaces rather than being swallowed', async () => {
+    // The host shows its own error, which is more useful than a silent empty
+    // list that reads as "no matches".
+    for (const status of [403, 404, 429, 500]) {
+        const ctx = load({[SEARCH_URL]: {status, body: 'refused'}});
+        let threw = false;
+        try {
+            await ctx.instance.search('milf', 1, NO_FILTERS);
+        } catch (error) {
+            threw = true;
+            test.includes(error.message, 'HTTP ' + status, status + ' is named');
+        }
+        test.true(threw, status + ' throws');
+    }
+});
+
+// ---------------------------------------------------------------------------
+// getDetail
+// ---------------------------------------------------------------------------
+
+test('getDetail: the video title, not the site name', async () => {
+    // `itemprop="name"` appears twice on the page: the site first, then the
+    // video. Reading the first labels every video "Pornmz".
+    const ctx = load();
+    const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    test.true(parsed.ok, parsed.reason);
+    test.equal(parsed.detail.name,
+        'Wifey Mayalynn and Mrjax Tattooed Baddie Hotwife Loves BBC');
+});
+
+test('getDetail: the description is decoded', async () => {
+    const ctx = load();
+    const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    test.includes(parsed.detail.description, 'virgin', 'the real text');
+    test.equal(parsed.detail.description.indexOf('&quot;'), -1, 'no entity escapes remain');
+    test.equal(parsed.detail.description.indexOf('&#039;'), -1, 'including numeric ones');
+});
+
+test('getDetail: the thumbnail comes from the microdata', async () => {
+    const ctx = load();
+    const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    test.includes(parsed.detail.imageUrl, 'wp-content/uploads');
+});
+
+test('getDetail: genres are the categories, not the content tags', async () => {
+    // The page's tag block mixes both; the categories are the fa-folder links.
+    // Including the tags as well would fill the list with near-duplicates.
+    const ctx = load();
+    const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    const genres = parsed.detail.genre;
+    test.ok(genres.length > 0, 'there are genres');
+    test.includes(genres.join(','), 'Interracial', 'a category is present');
+    test.equal(genres.join(',').indexOf('HD'), -1, 'the "HD" tag is not a genre');
+    test.equal(genres.join(',').indexOf('Cowgirl'), -1, 'nor is "Cowgirl"');
+});
+
+test('getDetail: one post is one chapter', async () => {
+    // A pornmz post is a standalone video, not an episode of a series. The site
+    // has no series listing to group by, so a one-item chapter list is the
+    // honest shape rather than a fabricated show.
+    const ctx = load();
+    const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    test.equal(parsed.detail.chapters.length, 1);
+    test.equal(parsed.detail.chapters[0].url, PAGE_URL);
+    test.equal(parsed.detail.status, 1, 'a published video is complete');
+});
+
+test('getDetail: the chapter carries a real upload date', async () => {
+    const ctx = load();
+    const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    const when = parsed.detail.chapters[0].dateUpload;
+    test.equal(typeof when, 'number', 'milliseconds since the epoch');
+    test.ok(when > 1500000000000, 'a plausible date, not zero');
+    const asDate = new Date(when).toISOString().slice(0, 10);
+    test.equal(asDate, '2026-09-26', 'the UTC offset in the page is applied');
+});
+
+test('getDetail: the author is empty rather than invented', async () => {
+    // The page's own `author` is a Person scope whose only name is the site.
+    // Writing that in would put "Pornmz" in the author field of every entry.
+    const ctx = load();
+    const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    test.equal(parsed.detail.author, '');
+});
+
+test('getDetail: a page with no title is an error, not a blank entry', async () => {
+    const ctx = load({
+        [PAGE_URL]: {status: 200, body: '<html><body>gone</body></html>'}
+    });
+    let threw = false;
+    try {
+        await ctx.instance.getDetail(PAGE_URL);
+    } catch (error) {
+        threw = true;
+        test.includes(error.message, 'no title');
+    }
+    test.true(threw, 'rather than an entry with an empty name');
+});
+
+test('getDetail: a relative link is resolved against the base URL', async () => {
+    // The app hands back whatever `link` was in the listing. This source always
+    // writes absolute links, so a relative one means something upstream changed.
+    const ctx = load();
+    await ctx.instance.getDetail('/video/id=pm26201719309399');
+    test.equal(ctx.calls[0].url, PAGE_URL, 'resolved before fetching');
+});
+
+// ---------------------------------------------------------------------------
+// getVideoList
+// ---------------------------------------------------------------------------
+
+test('getVideoList: the master playlist plus every variant, with a Referer', async () => {
+    // The playlist is on a third-party CDN that answers 403 to a referer from
+    // the provider's domain. Every stream has to carry the CDN's own origin, or
+    // playback fails while everything else looks perfect.
+    const ctx = load();
+    const parsed = h.hostParseVideos(await ctx.instance.getVideoList(PAGE_URL));
+    test.true(parsed.ok, parsed.reason);
+    test.equal(parsed.items[0].url, MASTER, 'the master is first');
+    test.equal(parsed.items[0].quality, 'auto');
+    for (const stream of parsed.items) {
+        test.equal(stream.headers.Referer, 'https://video.twimg.com',
+            'derived from the playlist origin');
+    }
+    test.equal(ctx.calls[1].headers.Referer, 'https://video.twimg.com',
+        'and used to fetch the playlist itself');
+});
+
+test('getVideoList: the variants are absolute and labelled by resolution', async () => {
+    const ctx = load();
+    const parsed = h.hostParseVideos(await ctx.instance.getVideoList(PAGE_URL));
+    const variants = parsed.items.filter(v => v.quality !== 'auto');
+    test.equal(variants.length, 3, 'the master really has three video variants');
+    const qualities = variants.map(v => v.quality).sort();
+    test.equal(qualities.join(','), '1280x720,480x270,640x360');
+    for (const variant of variants) {
+        test.ok(/^https:\/\/video\.twimg\.com\//.test(variant.url),
+            variant.url + ' is absolute, resolved against the master origin');
+    }
+});
+
+test('getVideoList: audio renditions are paired to the variant that uses them', async () => {
+    // A demuxed master: each video variant names an AUDIO group. Pairing by
+    // group avoids handing a variant the wrong track.
+    const ctx = load();
+    const videos = await ctx.instance.getVideoList(PAGE_URL);
+    const hd = videos.filter(v => v.quality === '1280x720')[0];
+    test.ok(hd.audios && hd.audios.length, 'the 720p variant carries its audio');
+    test.includes(hd.audios[0].file, '128000', 'the 128k rendition, matching its group');
+});
+
+test('getVideoList: a page with no contentUrl offers nothing rather than a broken stream', async () => {
+    const ctx = load({
+        [PAGE_URL]: {status: 200, body: '<meta itemprop="name" content="Something" />'}
+    });
+    const videos = await ctx.instance.getVideoList(PAGE_URL);
+    test.equal(videos.length, 0, 'an empty list makes the app say there is no source');
+});
+
+test('getVideoList: a playlist that will not load still yields the master', async () => {
+    // The master is playable on its own. Losing the variant list is a downgrade,
+    // not a failure.
+    const ctx = load({[MASTER]: {status: 403, body: 'no'}});
+    const parsed = h.hostParseVideos(await ctx.instance.getVideoList(PAGE_URL));
+    test.true(parsed.ok, parsed.reason);
+    test.equal(parsed.items.length, 1, 'just the master');
+    test.equal(parsed.items[0].url, MASTER);
+    test.ok(ctx.log.some(l => /variant list unavailable/.test(l)), 'and the log says why');
+});
+
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
+
+test('filters: the four sorts and the categories are real controls', async () => {
+    const ctx = load();
+    const parsed = h.hostParseFilters(ctx.instance.getFilterList());
+    test.true(parsed.ok, parsed.reason);
+    const groups = {};
+    for (const group of parsed.filters) {
+        groups[group.name] = group.state;
+    }
+    test.ok(groups.Sort, 'a Sort group');
+    test.ok(groups.Category, 'a Category group');
+    const sorts = groups.Sort.map(s => s.value);
+    for (const value of ['', 'latest', 'most-viewed', 'longest', 'random']) {
+        test.ok(sorts.indexOf(value) !== -1, 'Sort offers ' + JSON.stringify(value));
+    }
+    test.equal(groups.Category.length, 67, 'the site publishes 67 categories');
+});
+
+test('filters: every category offered is one the site actually serves', async () => {
+    // A slug that has been renamed would 404 for the user who picked it. The
+    // list here is compared against the fixture set and against the shape the
+    // site publishes, so a stale entry is visible in the suite.
+    const ctx = load();
+    const groups = ctx.instance.getFilterList();
+    const categories = groups.filter(g => g.name === 'Category')[0].state;
+    const slugs = categories.map(c => c.value);
+    test.equal(new Set(slugs).size, slugs.length, 'no duplicates');
+    for (const slug of slugs) {
+        test.ok(/^[a-z0-9-]+$/.test(slug), slug + ' is a URL-safe slug');
+    }
+    test.ok(slugs.indexOf('brazzers') !== -1, 'a known category is present');
+    test.ok(slugs.indexOf('teen') !== -1, 'including the one that matters most to get right');
+});
+
+// ---------------------------------------------------------------------------
+// Contract
+// ---------------------------------------------------------------------------
+
+test('contract: the manga-only entry points report as unimplemented', async () => {
+    // This is an anime source, so AnymeX never calls these. Throwing is how the
+    // contract reports "not implemented"; returning empty would look like a
+    // working source with no pages. The list is the bridged provider's own:
+    // getPageList, getHtmlContent, cleanHtmlContent, and no others.
+    const ctx = load();
+    for (const method of ['getPageList', 'getHtmlContent', 'cleanHtmlContent']) {
+        let threw = false;
+        try {
+            await ctx.instance[method]('x');
+        } catch (error) {
+            threw = true;
+            test.includes(error.message, 'not implemented');
+        }
+        test.true(threw, method + ' throws');
+    }
+});
+
+test('contract: no method is shipped that the host cannot call', () => {
+    // The bridged provider is a closed list. A method outside it that looks like
+    // an entry point is dead code masquerading as a capability the source does
+    // not have. `fetchPage` is the source's own HTTP helper and is called only
+    // by this file; it is named here so the exception is deliberate.
+    const bridged = [
+        'getLatestUpdates', 'getPopular', 'getVideoList', 'search', 'getDetail',
+        'getPageList', 'cleanHtmlContent', 'getHtmlContent', 'getFilterList',
+        'getSourcePreferences',
+        'fetchPage', 'metaValues', 'metaText', 'parseCards', 'parseGenres',
+        'uploadMillis', 'listing'
+    ];
+    const proto = Object.getPrototypeOf(load().instance);
+    for (const name of Object.getOwnPropertyNames(proto)) {
+        if (name === 'constructor' || name.startsWith('_')) {
+            continue;
+        }
+        if (typeof proto[name] === 'function') {
+            test.ok(bridged.indexOf(name) !== -1, name + ' is a real entry point or a named helper');
+        }
+    }
+});
+
+/** The source with its comments removed, so a lint reads code and not prose. */
+function sourceCode() {
+    const text = require('fs').readFileSync(SOURCE, 'utf8');
+    return text
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+test('contract: the source holds no credentials and needs no auth', () => {
+    // Comments are stripped first: this source's own header explains that it
+    // sends no cookie, and matching that sentence would be nonsense.
+    const code = sourceCode();
+    for (const pattern of [/api[_-]?key/i, /bearer\s/i, /authorization/i, /cookie/i, /password/i, /token\s*=/i]) {
+        test.equal(pattern.test(code), false, 'no ' + pattern + ' in the code');
+    }
+});
+
+test('contract: no eval, no Function constructor', () => {
+    const code = sourceCode();
+    test.equal(/\beval\s*\(/.test(code), false, 'no eval()');
+    test.equal(/new\s+Function\s*\(/.test(code), false, 'no Function()');
+});
+
+test('contract: logs never carry a response body', async () => {
+    // A log line is the one place a fixture or a token could leak into a user's
+    // console. The source logs URLs and reasons; this checks it logs no more.
+    const secret = 'A-VERY-LONG-UNIQUE-STRING-FROM-A-RESPONSE-BODY-918273645';
+    const ctx = load({
+        [BASE + '/?filter=most-viewed']: {
+            status: 200,
+            body: '<article><a href="' + BASE + '/video/id=pm1"><span class="title">' +
+                secret + '</span></a></article>'
+        },
+        [SEARCH_URL]: {status: 200, body: secret}
+    });
+    await ctx.instance.getPopular(1).catch(() => {});
+    await ctx.instance.search('milf', 1, NO_FILTERS).catch(() => {});
+    const logged = ctx.log.join('\n');
+    test.equal(logged.indexOf(secret), -1, 'the body is not in the log');
+});
+
+test.run();

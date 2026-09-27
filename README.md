@@ -28,8 +28,12 @@ modules/<provider>/
     manifest.json   metadata Sora fetches when the module is added
     module.js       the four entry points Sora calls
     README.md       endpoints, provider quirks, maintenance notes
+anymex/<source>.js
+                   an AnymeX / Mangayomi source extension — a different host
+                   with a different contract; see anymex/README.md
 tests/
     harness.js      the Sora runtime, reproduced closely enough to catch real bugs
+    anymex-harness.js  the same for the AnymeX runtime
     fixtures/       recorded provider responses; the suite never touches the network
 shared/
     net.js          the fetchv2 normaliser: the canonical, separately tested copy
@@ -137,7 +141,11 @@ empty result set, a post with no thumbnail, and a page publishing no stream.
 
 ## Status
 
-- **[pornmz.com](modules/pornmz/)** — built and tested, at 1.2.0.
+- **[pornmz.com](modules/pornmz/)** — built and tested, at 1.4.0. Browse covers the site's four
+  sorts and all 67 categories.
+- **[pornmz for AnymeX](anymex/)** — the same provider as a source extension for AnymeX, at
+  1.0.0. A different host with a different contract; the browse choice becomes real UI there
+  rather than a text field, which is the one thing a Sora module cannot have.
 - **Luna** — paused. The module runs there, but two host-side gaps (§0.1) mean it is not a
   target.
 - **hanime.tv, sxyprn.com, pornhub.com** — assessed, not built, and why:
