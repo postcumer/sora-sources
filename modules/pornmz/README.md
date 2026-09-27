@@ -10,7 +10,7 @@ points — but Luna is **not** a supported target right now; see `../../COMPATIB
 | | |
 |---|---|
 | Search | WordPress REST API, one request |
-| Browse | A setting in the module's own settings screen, or the keywords `latest` / `oldest` |
+| Browse | All four of the site's own sorts, all 67 categories — see *Browsing* |
 | Episodes | One post = one standalone video |
 | Sources | The HLS playlist published in the page's own microdata |
 | Quality | Up to 1080p (measured — see below) |
@@ -19,31 +19,83 @@ points — but Luna is **not** a supported target right now; see `../../COMPATIB
 
 ## Browsing
 
-**The main way to browse: one setting, set once.** Go to **Settings → Modules → pornmz** and
-set `BROWSE_ORDER` to `newest` or `oldest`. From then on the search box browses the whole
-archive in that order, whatever you type — including nothing at all. Set it back to an empty
-value to return to ordinary search.
+There are two ways in, and they compose: type a keyword for a one-off browse, or pin a listing
+once in the settings screen and have the search box browse it from then on.
 
-That field is a **real control rendered by the app**, and it is the only kind of control a
-module can have (see *Why the control is a text field* below).
+**Both use the site's own listing pages**, not the REST API. Each of the four sorts is a real
+ordering the provider computed, and `?filter=most-viewed` is a real view-count ranking — not the
+module sorting an approximation on top of data the site never exposed.
 
-**The other way: type a keyword.**
+| Sort | URL | What the site does |
+|---|---|---|
+| Latest | `?filter=latest` | Newest first |
+| Popular | `?filter=most-viewed` | The site's own view counts, descending |
+| Longest | `?filter=longest` | By runtime |
+| Random | `?filter=random` | See the honest note below |
+
+### By keyword
 
 | Type this | You get |
 |---|---|
-| `latest`, `newest`, `new`, `recent`, `recently`, `fresh` | The newest posts |
-| `oldest`, `old`, `oldest first` | The oldest posts — the archive walked backwards |
+| `latest`, `newest`, `new`, `new videos`, `recent`, `recently`, `fresh`, `newest first` | Newest first |
+| `popular`, `most viewed`, `most-viewed`, `top`, `best`, `trending`, `hot`, `most watched` | Most viewed |
+| `longest`, `long`, `longest videos` | Longest runtime |
+| `random`, `shuffle`, `surprise` | The `?filter=random` listing |
+| `cat:<slug>` or `category:<slug>` | That category's listing |
 
-One request either way:
+Keywords are matched **whole**, so `latest milf` is an ordinary search rather than a browse.
+
+**`?filter=random` does not appear to randomise.** Three consecutive requests returned
+byte-identical pages (identical md5, 55,450 bytes each) — a set that is stable across requests,
+and distinct from both `latest` and `most-viewed`, so it is a real listing rather than a
+fallthrough. Whether the page is order-randomised and then cached, or is seeded per session,
+cannot be told from outside. The keyword is kept because the endpoint is real and the intent is
+right; the result may well be the same 20 videos twice. Verified, not assumed, and recorded
+here so nobody later reports it as a bug in the module.
+
+### By category
+
+The site has **67 categories**. They live at `/pmvideo/c/{slug}` — *not* `/category/{slug}` —
+and use the same card markup as the sorts, so they parse the same way. A category needs the
+`cat:` prefix deliberately: the slugs are ordinary words, and a bare-word match would silently
+turn a text search into a category listing.
+
+The `/categories` page in the site's own menu only renders **19** of them. The complete list is
+in the REST API and is stable:
 
 ```
-GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia
-GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=asc&_embed=wp:featuredmedia
+GET https://pornmz.com/wp-json/wp/v2/categories?per_page=100
 ```
 
-**There are no buttons in the search bar, and a module cannot add any.** This is worth being
-precise about, because "no options for home / latest / oldest / popular in Sora" is a platform
-limit rather than a gap in this module. Verified against the source, not assumed:
+```
+amateur anal analmom asian bangbros bdsm best big-ass big-dick big-tits blacked blowjob
+brattysis brazzers brother-sister-porn caughtfapping celebrity christmas creampie dadcrush
+deep-throat deeper digitalplayground ebony facial fakehostel faketaxi familystrokes
+father-daughter-porn freeuse freeusefantasy gangbang hardcore hornypervmom incest
+instagram-models interracial latina lesbian massage milf milkyperu missax mofos
+mother-daughter-porn mom-son-porn mommysboy momsteachsex mypervyfamily nurumassage onlyfans
+orgy pervmom pov puretaboo reality realitykings sexmex sislovesme squirting
+stepsiblingscaught sweetsinner taboo teen threesome valentines-day
+```
+
+Slugs are normalised rather than pasted: `cat:Big Tits!` becomes `/pmvideo/c/big-tits`.
+
+### The settings screen
+
+**The main way to browse: one setting, set once.** Go to **Settings → Modules → pornmz** and
+set `BROWSE_ORDER` to any of the words above, or to `cat:<slug>`. From then on the search box
+browses that listing, whatever you type. Set it back to an empty value to return to ordinary
+search.
+
+That field is a **real control rendered by the app**, and it is the only kind of control a
+module can have (see *Why the control is a text field* below). A value the module does not
+recognise is ignored rather than honoured, so a typo leaves normal search working instead of
+silently browsing nothing.
+
+### No buttons in the search bar — and no way to add any
+
+"There are no options for home / latest / oldest / popular in Sora" is a platform limit, not a
+gap in this module. Verified against the source:
 
 - A module is a **script**. `setupJavaScriptEnvironment()`
   (`JavaScriptCore+Extensions.swift:383-392`) injects `console`, `fetch`, `base64` and some
@@ -56,37 +108,21 @@ limit rather than a gap in this module. Verified against the source, not assumed
 - The only two call sites for `searchResults` in the entire app are `SearchView.swift:269/281`
   and `AniListLibraryMatchView.swift:243`. Both need a keyword.
 
-The one surface a module *does* own is a settings screen built from `const` declarations in the
-script — which is what `BROWSE_ORDER` is. `../../COMPATIBILITY.md` §3.1.1 has the full
+So every listing is reachable two ways — a typed keyword, or the setting — and the setting is
+the one that turns the search box into a browser. `../../COMPATIBILITY.md` §3.1.1 has the full
 mechanism and the file references.
 
-### Why the control is a text field and not a switch
+### Why the control is a text field and not a list of buttons
 
 `ModuleSettingsView` infers a control type from the literal it finds, and only `true`/`false`
-becomes a switch. So the value is a string naming an ordering, and the row is labelled by the
-`const` name with my comment underneath as the caption.
+becomes a switch — so the value is a string, and the row is labelled by the `const` name with my
+comment underneath as the caption.
 
 There *is* a `Menu`-of-buttons branch in that view (`ModuleSettingsView.swift:189-203`) that
-would be exactly right for a browse list — but `parseSettingsSchema` is the only code that
-builds those settings and it hardcodes `options: nil` (`ModuleSettings.swift:161`), so the
-branch is unreachable. That is a host bug, reported in `../../UPSTREAM-REPORT.md`; it is the
-one change that would turn this section from a text field into buttons.
-
-### Why popularity is not an option
-
-`popular`, `trending`, `top` and `best` are not accepted as keywords, and typing `popular` into
-the setting does nothing. This is checked rather than assumed — the REST API rejects
-`orderby=comment_count` outright (HTTP 400, `Invalid parameter(s): orderby`), posts carry no
-view count, and the only orderings it accepts are `date`, `modified`, `id` and `title`. There
-is no popularity signal here at all, so answering "popular" with the newest posts would put a
-confident label on data that does not mean it. A browse that lies is worse than no browse.
-
-An unrecognised value in the setting is ignored rather than honoured, so a typo leaves normal
-search working instead of silently browsing nothing.
-
-Words are matched **whole**, so `latest milf` is an ordinary search, not a browse.
-
-Measured live: 20 posts, 20 thumbnails, newest first.
+would be exactly right for a browse list of eleven listings. But `parseSettingsSchema` is the
+only code that builds those settings and it hardcodes `options: nil` (`ModuleSettings.swift:161`),
+so the branch is unreachable. That is a host bug, reported in `../../UPSTREAM-REPORT.md`; it is
+the one change that would turn this section from a text field into buttons.
 
 ## Downloads
 
@@ -164,11 +200,15 @@ This fix covers **playback only**. Downloads are a separate code path with separ
 
 ## Endpoints
 
-Three, all public and unauthenticated:
+All public and unauthenticated. Search and details go through the REST API; browsing uses the
+site's own rendered listing pages, because the sorts and the view counts the sorts run on are
+not in the API.
 
 ```
 GET https://pornmz.com/wp-json/wp/v2/posts?search={kw}&per_page=20&_embed=wp:featuredmedia
-GET https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order={asc|desc}&_embed=wp:featuredmedia
+GET https://pornmz.com/?filter={latest|most-viewed|longest|random}
+GET https://pornmz.com/pmvideo/c/{category}
+GET https://pornmz.com/wp-json/wp/v2/categories?per_page=100     ← full list of 67
 GET https://pornmz.com/video/id={post}
 ```
 
@@ -178,6 +218,14 @@ rather than one per result. This is why the module does not need any absolute
 URL resolution: `post.link` and `source_url` are already absolute. The
 injected `URL` global does not exist in JavaScriptCore, so a module that relied
 on `new URL()` would throw on device.
+
+**A correction kept in the module, so it is not repeated.** An earlier revision of this README
+claimed the provider had no popularity signal, because the REST API rejects
+`orderby=comment_count` and posts carry no view count. Both statements are true and neither
+answers the question — the view counts live in the theme, not in the REST payload, and
+`?filter=most-viewed` is that field sorted descending. Checking the API and concluding the
+provider had no popularity data was the wrong inference. It is spelled out at the top of
+`module.js` for the same reason.
 
 ## Page structure the module depends on
 
@@ -328,11 +376,19 @@ Things that would break this module, and what the failure would look like:
 | `itemprop` names changed | `extractStreamUrl` logs `no contentUrl` | `metaContent`, `META_REPEATS` |
 | Thumbnail moved out of `_embedded` | Search rows show a blank image | `featuredImage` |
 | Attribute quoting changes | `metaContent` finds nothing | the two patterns in `metaContent` |
+| **`?filter=` renamed or dropped** | **Every browse word returns nothing; only text search works** | `BROWSE_KEYWORDS` |
+| **Cards stop being `<article>`** | **All browsing empties; the log says `no cards`** | `parseCards` |
+| **Categories move off `/pmvideo/c/`** | **Every `cat:` browse returns nothing** | `CATEGORY_PATH` |
 | **Video moved to a different CDN** | **Playback still fine; downloads fail 403** | `manifest.json` `baseUrl` — see *Downloads* |
 
-The last row is the asymmetric one. Everything else the module degrades on its own; a CDN
-migration shows up in exactly one place, and the test that pins the two origins together will
-fail as soon as the playlist fixture is recaptured.
+The last row is the asymmetric one. Everything else the module degrades on its own and says so
+in the log; a CDN migration shows up in exactly one place, and the test that pins the two
+origins together will fail as soon as the playlist fixture is recaptured.
+
+Browsing is the fragile half, because it parses a WordPress **theme** rather than an API. Theme
+markup can change in a way an API contract will not. The two listing pages are recorded as
+fixtures (`tests/fixtures/pornmz/listing.json`, `category.json`) so a change is caught by
+`node ../../tests/run.js` rather than by a user seeing an empty search.
 
 **Before replacing the fixtures**, run the suite (`node ../../tests/run.js`). The
 fixtures under `tests/fixtures/pornmz/` are real captured responses, so a

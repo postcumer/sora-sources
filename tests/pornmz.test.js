@@ -183,83 +183,189 @@ test('search: the keyword is URL-encoded into the request', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Browse keywords
+// Browse — the provider's own listing pages
 // ---------------------------------------------------------------------------
 
-const BROWSE_URL =
-    'https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=desc&_embed=wp:featuredmedia';
-const BROWSE_OLDEST_URL =
-    'https://pornmz.com/wp-json/wp/v2/posts?per_page=20&orderby=date&order=asc&_embed=wp:featuredmedia';
+const FILTER_BASE = 'https://pornmz.com/?filter=';
+const CATEGORY_BASE = 'https://pornmz.com/pmvideo/c/';
+const CATEGORY_URL = CATEGORY_BASE + 'brazzers';
 
-function browseFixture() {
-    const body = JSON.stringify([
-        { link: PAGE_URL, title: { rendered: 'Newest first' } },
-        { link: PAGE_URL + '2', title: { rendered: 'Then this' } }
-    ]);
+/** Routes for any listing URL, each answering with the recorded card markup. */
+function listingRoutes() {
     return {
-        [BROWSE_URL]: { status: 200, body: body },
-        [BROWSE_OLDEST_URL]: { status: 200, body: body }
+        [FILTER_BASE + 'most-viewed']: { status: 200, body: CARDS },
+        [FILTER_BASE + 'latest']: { status: 200, body: CARDS },
+        [FILTER_BASE + 'longest']: { status: 200, body: CARDS },
+        [FILTER_BASE + 'random']: { status: 200, body: CARDS },
+        [CATEGORY_URL]: { status: 200, body: CARDS }
     };
 }
 
-test('browse: a recency keyword lists the newest posts instead of searching', async () => {
-    // Neither app has a home page — Sora has no home tab, and both refuse to
-    // call a module with an empty query — so a keyword the user chooses is the
-    // only way in to a listing of what the provider has published.
-    const ctx = load(browseFixture());
-    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+// Two cards, the shape the site's theme really emits: data-main-thumb on the
+// article, a duration, a view count, and the title both as a span and an attribute.
+const CARDS =
+    '<article data-main-thumb="https://pornmz.com/wp-content/uploads/2019/10/one.jpg" ' +
+    'class="thumb-block video-preview-item post-83103" data-post-id="83103">' +
+    '<a href="https://pornmz.com/video/id=pm2505492683103" title="Brazzers &#8211; Making Assmends">' +
+    '<div class="post-thumbnail"><div class="post-thumbnail-container">' +
+    '<img class="video-main-thumb" width="300" height="168.75" ' +
+    'src="https://pornmz.com/wp-content/uploads/2019/10/one.jpg" alt="Brazzers"></div>' +
+    '<div class="video-overlay"></div><span class="hd-video">HD</span> ' +
+    '<span class="duration">37:00</span></div>' +
+    '<header class="entry-header"> <span class="title">Brazzers &#8211; Making Assmends</span>' +
+    '<div class="under-thumb"> <span class="views"><i class="fa fa-eye"></i> 629K</span></div>' +
+    '</header></a></article>' +
+    '<article data-main-thumb="https://pornmz.com/wp-content/uploads/2026/09/two.jpg" ' +
+    'class="thumb-block video-preview-item post-309435" data-post-id="309435">' +
+    '<a href="https://pornmz.com/video/id=pm27084644309435" title="PervMom &#8211; Talisman">' +
+    '<div class="post-thumbnail"><img class="video-main-thumb" ' +
+    'src="https://pornmz.com/wp-content/uploads/2026/09/two.jpg" alt="PervMom">' +
+    '<span class="duration">56:00</span></div>' +
+    '<header class="entry-header"> <span class="title">PervMom &#8211; Talisman</span>' +
+    '<span class="views"><i class="fa fa-eye"></i> 12K</span></header></a></article>';
+
+test('browse: every sort the site publishes is reachable by keyword', async () => {
+    // The provider's own front page: ?filter=most-viewed / latest / longest /
+    // random. Each is the site computing a real ordering, including a real
+    // view-count ranking — not the module approximating one from the REST API.
+    const expected = {
+        'latest': 'latest', 'popular': 'most-viewed', 'most viewed': 'most-viewed',
+        'trending': 'most-viewed', 'top': 'most-viewed', 'best': 'most-viewed',
+        'longest': 'longest', 'random': 'random', 'shuffle': 'random'
+    };
+    for (const [keyword, filter] of Object.entries(expected)) {
+        const ctx = load(listingRoutes());
+        await ctx.context.searchResults(keyword);
+        test.equal(ctx.calls[0].url, FILTER_BASE + filter,
+            JSON.stringify(keyword) + ' -> ?filter=' + filter);
+    }
+});
+
+test('browse: a popular listing really is the site view counts, in order', async () => {
+    // The claim that this provider has no popularity signal was wrong, and this
+    // is the test that says so: the card carries <span class="views">629K</span>,
+    // and ?filter=most-viewed is that field sorted descending by the theme.
+    const ctx = load(listingRoutes());
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('popular'));
     test.true(parsed.ok, 'the host could parse the result');
-    test.equal(parsed.items.length, 2, 'the newest posts are returned');
-    test.equal(parsed.items[0].title, 'Newest first', 'newest first');
-    test.equal(requestCount(ctx), 1, 'one request');
+    test.equal(parsed.items.length, 2, 'both cards returned');
+    test.includes(ctx.calls[0].url, 'filter=most-viewed', 'asked the site for its view ranking');
+    test.ok(CARDS.indexOf('629K') !== -1, 'the fixture really does carry view counts');
 });
 
-test('browse: the request asks for date order and carries no search term', async () => {
-    const ctx = load(browseFixture());
-    await ctx.context.searchResults('latest');
-    const url = ctx.calls[0].url;
-    test.includes(url, 'orderby=date', 'newest first');
-    test.includes(url, 'order=desc', 'and explicitly descending');
-    test.includes(url, '_embed=wp:featuredmedia', 'thumbnails still embedded');
-    test.equal(url.indexOf('search='), -1, 'no search term — there is nothing to match');
+test('browse: cards become rows the host can render', async () => {
+    const ctx = load(listingRoutes());
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    const first = parsed.items[0];
+    test.equal(first.title, 'Brazzers – Making Assmends', 'title decoded from the card');
+    test.equal(first.image, 'https://pornmz.com/wp-content/uploads/2019/10/one.jpg',
+        'thumbnail taken from data-main-thumb');
+    test.equal(first.href, 'https://pornmz.com/video/id=pm2505492683103',
+        'href is the video page, so the row opens something playable');
+    test.equal(requestCount(ctx), 1, 'one request for a whole listing');
 });
 
-test('browse: "oldest" walks the archive in the other direction', async () => {
-    // The provider can answer this honestly — the API sorts by post date either
-    // way. Unlike "popular", which there is no data behind at all.
-    const ctx = load(browseFixture());
-    const parsed = h.hostParseSearch(await ctx.context.searchResults('oldest'));
-    test.equal(parsed.items.length, 2, 'results returned');
-    test.includes(ctx.calls[0].url, 'order=asc', 'oldest first');
-    test.includes(ctx.calls[0].url, 'orderby=date', 'ordered by post date');
-    test.equal(ctx.calls[0].url.indexOf('search='), -1, 'still a browse, not a text search');
+test('browse: a card with no thumbnail at all yields a blank image, not a dropped row', async () => {
+    // The host drops a row missing any of title/image/href, so a card with no
+    // thumbnail anywhere still has to be offered. Same trade as the REST path.
+    const body = CARDS
+        .replace(/\s*data-main-thumb="[^"]*"/, '')
+        .replace(/<img\b[^>]*>/i, '');
+    const ctx = load({ [FILTER_BASE + 'latest']: { status: 200, body: body } });
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    test.equal(parsed.items.length, 2, 'both cards still offered');
+    test.equal(parsed.items[0].image, '', 'the first has no image rather than being lost');
+});
+
+test('browse: the thumbnail falls back from data-main-thumb to the <img src>', async () => {
+    // data-main-thumb is the convenient source, but the same URL is in the img tag
+    // and the two can disagree when a theme changes. Losing the image over that
+    // would blank a card that has a perfectly good thumbnail.
+    const body = CARDS.replace(/\s*data-main-thumb="[^"]*"/, '');
+    const ctx = load({ [FILTER_BASE + 'latest']: { status: 200, body: body } });
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    test.equal(parsed.items[0].image, 'https://pornmz.com/wp-content/uploads/2019/10/one.jpg',
+        'taken from the img tag instead');
+});
+
+test('browse: a card missing its title span falls back to the link title attribute', async () => {
+    const body = CARDS.replace(/<span class="title">[^<]*<\/span>/, '');
+    const ctx = load({ [FILTER_BASE + 'latest']: { status: 200, body: body } });
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    test.equal(parsed.items.length, 2, 'the card is not dropped');
+    test.equal(parsed.items[0].title, 'Brazzers – Making Assmends', 'title from the attribute');
+});
+
+test('browse: a card with no href is dropped rather than sent to the host', async () => {
+    const body = CARDS.replace(/href="https:\/\/pornmz\.com\/video\/id=pm2505492683103"/, 'href=""');
+    const ctx = load({ [FILTER_BASE + 'latest']: { status: 200, body: body } });
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    test.equal(parsed.items.length, 1, 'only the usable card is offered');
+});
+
+test('browse: a relative thumbnail is dropped rather than passed through', async () => {
+    // JavaScriptCore has no URL global, so a root-relative path cannot be
+    // resolved here. Passing it through would render as a broken image.
+    const body = CARDS.replace('data-main-thumb="https://pornmz.com/wp-content/uploads/2019/10/one.jpg"',
+        'data-main-thumb="/wp-content/uploads/2019/10/one.jpg"');
+    const ctx = load({ [FILTER_BASE + 'latest']: { status: 200, body: body } });
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    test.equal(parsed.items[0].image, '', 'relative URL refused');
+});
+
+test('browse: "cat:name" opens that category listing', async () => {
+    // Categories live at /pmvideo/c/{slug}, not /category/{slug}, and use the
+    // same card markup as the sorts.
+    const ctx = load(listingRoutes());
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('cat:brazzers'));
+    test.equal(ctx.calls[0].url, CATEGORY_URL, 'the category page');
+    test.equal(parsed.items.length, 2, 'and it parses the same way');
+    for (const prefix of ['cat:', 'category:', 'Category:', '  cat :  ']) {
+        const c = load(listingRoutes());
+        await c.context.searchResults(prefix + 'brazzers');
+        test.equal(c.calls[0].url, CATEGORY_URL, JSON.stringify(prefix) + ' is accepted');
+    }
+});
+
+test('browse: a category slug is normalised instead of pasted into the path', async () => {
+    const ctx = load(listingRoutes());
+    await ctx.context.searchResults('cat:Big Tits!');
+    test.equal(ctx.calls[0].url, CATEGORY_BASE + 'big-tits',
+        'spaced and punctuated slugs become the site\'s dash form');
+});
+
+test('browse: a bare word is a search, not a category', async () => {
+    // The site has 67 categories and their slugs are ordinary words — milf,
+    // anal, asian, bdsm. Matching bare words would turn ordinary text searches
+    // into category listings, so a category needs its prefix.
+    //
+    // "best" is deliberately absent from this list: the site has a category
+    // called "best" AND a browse word "best", and the browse word wins. That is
+    // the better collision to lose — a user typing "best" wants the popular
+    // listing, and "cat:best" still reaches the category.
+    for (const word of ['milf', 'anal', 'asian', 'bdsm', 'blacked']) {
+        const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=' + word +
+            '&per_page=20&_embed=wp:featuredmedia';
+        const ctx = load({ [url]: { status: 200, body: '[]' } });
+        await ctx.context.searchResults(word);
+        test.includes(ctx.calls[0].url, 'search=' + word,
+            JSON.stringify(word) + ' is searched, not treated as a category');
+    }
+});
+
+test('browse: a listing page with no cards is reported, not silently empty', async () => {
+    const ctx = load({ [FILTER_BASE + 'latest']: { status: 200, body: '<html><body>gone</body></html>' } });
+    const parsed = h.hostParseSearch(await ctx.context.searchResults('latest'));
+    test.equal(parsed.items.length, 0, 'nothing offered');
+    test.ok(ctx.log.some(l => /no cards/.test(String(l))),
+        'and the log says the markup changed rather than claiming the site is empty');
 });
 
 test('browse: the keyword match ignores case and surrounding space', async () => {
     for (const keyword of ['LATEST', '  Latest  ', 'Newest', 'new', 'recent', 'fresh']) {
-        const ctx = load(browseFixture());
+        const ctx = load(listingRoutes());
         const parsed = h.hostParseSearch(await ctx.context.searchResults(keyword));
         test.equal(parsed.items.length, 2, JSON.stringify(keyword) + ' browses');
-    }
-    for (const keyword of ['Oldest', 'OLDEST', '  old  ', 'oldest first']) {
-        const ctx = load(browseFixture());
-        await ctx.context.searchResults(keyword);
-        test.includes(ctx.calls[0].url, 'order=asc', JSON.stringify(keyword) + ' walks backwards');
-    }
-});
-
-test('browse: popularity words are NOT treated as a browse', async () => {
-    // Checked, not assumed: the API rejects orderby=comment_count outright
-    // (HTTP 400 "Invalid parameter(s): orderby"), posts carry no view count,
-    // and the only accepted orderings are date, modified, id and title. There is
-    // no popularity signal here, so these fall through to a real text search.
-    for (const keyword of ['popular', 'trending', 'top', 'best']) {
-        const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=' + keyword +
-            '&per_page=20&_embed=wp:featuredmedia';
-        const ctx = load({ [url]: { status: 200, body: '[]' } });
-        await ctx.context.searchResults(keyword);
-        test.includes(ctx.calls[0].url, 'search=' + keyword,
-            JSON.stringify(keyword) + ' searches rather than pretending to browse');
     }
 });
 
@@ -453,57 +559,56 @@ test('settings: the saved value reaches the running module', async () => {
     // The whole point of the settings screen: the user sets it once, the app
     // rewrites the const in the module's own script, and every later call sees
     // the new value. If the rewriter could not match the line this would fail.
-    const ctx = load(browseFixture(), { BROWSE_ORDER: 'oldest' });
+    const ctx = load(listingRoutes(), { BROWSE_ORDER: 'popular' });
     await ctx.context.searchResults('anything at all');
-    test.includes(ctx.calls[0].url, 'order=asc', 'the saved value is in effect');
+    test.equal(ctx.calls[0].url, FILTER_BASE + 'most-viewed', 'the saved value is in effect');
 });
 
-test('settings: choosing an order makes every search browse the archive', async () => {
-    // This is the part that does not require typing anything: the user picks
-    // "oldest" once in the settings screen and from then on the search box
-    // browses, whatever is in it.
-    for (const [setting, expected] of [['oldest', 'order=asc'], ['newest', 'order=desc'],
-                                       ['latest', 'order=desc'], ['recent', 'order=desc']]) {
-        const ctx = load(browseFixture(), { BROWSE_ORDER: setting });
+test('settings: every listing the site publishes can be chosen there', async () => {
+    // This is the part that does not require typing anything: the user picks a
+    // listing once in the settings screen and from then on the search box
+    // browses that listing, whatever is typed into it.
+    const expected = {
+        'latest': 'latest', 'popular': 'most-viewed', 'most-viewed': 'most-viewed',
+        'trending': 'most-viewed', 'longest': 'longest', 'random': 'random'
+    };
+    for (const [setting, filter] of Object.entries(expected)) {
+        const ctx = load(listingRoutes(), { BROWSE_ORDER: setting });
         const parsed = h.hostParseSearch(await ctx.context.searchResults('milf'));
         test.equal(parsed.items.length, 2, JSON.stringify(setting) + ' browses');
-        test.includes(ctx.calls[0].url, expected, JSON.stringify(setting) + ' orders correctly');
-        test.equal(ctx.calls[0].url.indexOf('search='), -1,
-            JSON.stringify(setting) + ' carries no search term');
+        test.equal(ctx.calls[0].url, FILTER_BASE + filter,
+            JSON.stringify(setting) + ' -> ?filter=' + filter);
     }
 });
 
+test('settings: a category can be pinned there too', async () => {
+    const ctx = load(listingRoutes(), { BROWSE_ORDER: 'cat:brazzers' });
+    await ctx.context.searchResults('milf');
+    test.equal(ctx.calls[0].url, CATEGORY_URL, 'the category listing, whatever was typed');
+});
+
 test('settings: the choice is case- and space-insensitive', async () => {
-    // The user types into a free text field, so "  Oldest " has to work.
-    for (const typed of ['Oldest', '  OLDEST  ', 'Newest']) {
-        const ctx = load(browseFixture(), { BROWSE_ORDER: typed });
+    // The user types into a free text field, so "  Popular " has to work.
+    for (const [typed, url] of [['Popular', FILTER_BASE + 'most-viewed'],
+                                ['  POPULAR  ', FILTER_BASE + 'most-viewed'],
+                                ['Longest', FILTER_BASE + 'longest'],
+                                ['Latest', FILTER_BASE + 'latest']]) {
+        const ctx = load(listingRoutes(), { BROWSE_ORDER: typed });
         await ctx.context.searchResults('x');
-        test.includes(ctx.calls[0].url, typed.trim().toLowerCase() === 'oldest' ? 'order=asc' : 'order=desc',
-            JSON.stringify(typed) + ' is understood');
+        test.equal(ctx.calls[0].url, url, JSON.stringify(typed) + ' is understood');
     }
 });
 
 test('settings: an unrecognised value is ignored rather than breaking search', async () => {
     // The field accepts anything. A typo must not turn every search into a
     // browse of nothing — it falls back to normal text search instead.
-    for (const typed of ['popuar', 'newestt', 'desc', '??']) {
-        const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=' + encodeURIComponent('milf') +
-            '&per_page=20&_embed=wp:featuredmedia';
+    for (const typed of ['popuar', 'newestt', 'desc', '??', 'order=asc']) {
+        const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=milf&per_page=20&_embed=wp:featuredmedia';
         const ctx = load({ [url]: { status: 200, body: '[]' } }, { BROWSE_ORDER: typed });
         await ctx.context.searchResults('milf');
         test.includes(ctx.calls[0].url, 'search=milf',
             JSON.stringify(typed) + ' leaves normal search working');
     }
-});
-
-test('settings: popularity words in the settings field are refused too', async () => {
-    // Same rule as the keywords, and the same reason: the provider publishes no
-    // popularity signal, so a setting that accepted "popular" would show the
-    // newest posts under a label that does not mean it.
-    const url = 'https://pornmz.com/wp-json/wp/v2/posts?search=milf&per_page=20&_embed=wp:featuredmedia';
-    const ctx = load({ [url]: { status: 200, body: '[]' } }, { BROWSE_ORDER: 'popular' });
-    await ctx.context.searchResults('milf');
-    test.includes(ctx.calls[0].url, 'search=milf', '"popular" does not silently mean "newest"');
 });
 
 test('settings: clearing the field restores ordinary search', async () => {
@@ -513,14 +618,14 @@ test('settings: clearing the field restores ordinary search', async () => {
     test.includes(ctx.calls[0].url, 'search=milf', 'the shipped default is plain search');
 });
 
-test('settings: keywords still work while a browse order is set', async () => {
+test('settings: the setting wins over the typed word, predictably', async () => {
     // The two mechanisms compose rather than fight: the setting is an override
-    // for the whole screen, and a typed keyword is still honoured when the
-    // override agrees with it.
-    const ctx = load(browseFixture(), { BROWSE_ORDER: 'newest' });
+    // for the whole screen, so it decides, every time, rather than depending on
+    // which one the module happens to look at first.
+    const ctx = load(listingRoutes(), { BROWSE_ORDER: 'longest' });
     await ctx.context.searchResults('oldest');
-    test.includes(ctx.calls[0].url, 'order=desc',
-        'the setting wins over the typed keyword, predictably rather than at random');
+    test.equal(ctx.calls[0].url, FILTER_BASE + 'longest',
+        'the setting decides, not the typed keyword');
 });
 
 test('downloads: the manifest baseUrl is the host the CDN will answer', async () => {

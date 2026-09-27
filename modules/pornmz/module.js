@@ -46,11 +46,12 @@
 //
 // A string rather than a bool: the parser infers type from the literal, and only
 // "true"/"false" becomes a switch. A text field can name either honest ordering.
-const BROWSE_ORDER = ""; // Type "newest" or "oldest" to make every search browse the whole archive in that order, ignoring the typed text. Leave this empty to search normally.
+const BROWSE_ORDER = ""; // Type "latest", "popular", "longest", "random", or "cat:milf" to make every search browse that listing instead of matching text. Leave this empty to search normally.
 // Settings end
 
 var BASE_URL = "https://pornmz.com";
 var SEARCH_ENDPOINT = "/wp-json/wp/v2/posts";
+var CATEGORY_PATH = "/pmvideo/c/";
 var SEARCH_LIMIT = 20;
 var PAGE_TTL_MS = 300000;
 
@@ -69,46 +70,158 @@ var META_REPEATS = {
 
 // Keywords that browse the archive rather than matching text.
 //
-// "newest" and "oldest" are recency intents, and this provider can answer both
-// honestly — the WordPress REST API sorts by post date in either direction.
+// Each maps to one of the site's own front-page sorts (?filter=…), so the module
+// reports a real ordering the provider actually computed rather than inventing
+// one. The site publishes a view count on every card (`<span class="views">629K`)
+// and a most-viewed sort over it, so "popular" has genuine data behind it here.
 //
-// "popular", "trending", "top" and "best" are deliberately absent, and this is
-// checked rather than assumed: the API rejects `orderby=comment_count` outright
-// (HTTP 400, "Invalid parameter(s): orderby"), posts carry no view count, and
-// the only orderings it accepts are date, modified, id and title. There is no
-// popularity signal here to report, so answering those words with the newest
-// posts would put a confident label on data that does not mean it. A browse
-// that lies is worse than no browse (§31, §54).
+// Correction worth keeping: an earlier revision of this file claimed no popularity
+// signal existed, on the grounds that the WordPress REST API rejects
+// `orderby=comment_count` and posts carry no view count. Both of those are true
+// and irrelevant — the view counts live in the theme, not in the REST payload, and
+// are exposed through these filter URLs. Checking the API and concluding the
+// provider has no popularity data was the wrong inference; check the front page.
 //
-// Value: undefined = newest first, "asc" = oldest first.
+// Value: the value to pass as ?filter=.
 var BROWSE_KEYWORDS = {
-    "latest": undefined,
-    "newest": undefined,
-    "new": undefined,
-    "recent": undefined,
-    "recently": undefined,
-    "fresh": undefined,
-    "oldest": "asc",
-    "old": "asc",
-    "oldest first": "asc"
+    "latest": "latest", "newest": "latest", "new": "latest", "new videos": "latest",
+    "recent": "latest", "recently": "latest", "fresh": "latest", "newest first": "latest",
+
+    "popular": "most-viewed", "most viewed": "most-viewed", "most-viewed": "most-viewed",
+    "top": "most-viewed", "best": "most-viewed", "trending": "most-viewed",
+    "hot": "most-viewed", "most watched": "most-viewed",
+
+    "longest": "longest", "long": "longest", "longest videos": "longest",
+
+    "random": "random", "shuffle": "random", "surprise": "random"
 };
+
+// A category is requested explicitly — "cat:milf" — rather than by matching a bare
+// word. The provider has 67 categories whose slugs are ordinary words (milf, anal,
+// best, asian, bdsm), so a bare-word match would silently turn a text search into a
+// category listing. The prefix keeps the two apart, exactly as matching whole
+// browse words does.
+var CATEGORY_PREFIX = /^cat(?:egory)?\s*:\s*(.+)$/i;
 
 /**
  * The browse chosen in the settings screen, or "" when there is none.
  *
- * Ignored unless it names a browse this provider can answer honestly, so a typo
- * in the settings field cannot silently turn every search into a browse of
- * nothing — the module falls back to normal text search instead. The value comes
- * back from the file as a string literal, but guard anyway: the field is a free
- * text box and a user can put anything in it.
+ * Accepts a browse word or "cat:slug". Anything else is ignored rather than
+ * honoured, so a typo in a free-text field cannot turn every search into a browse
+ * of nothing — the module falls back to normal text search instead. The value
+ * comes back from the file as a string literal, but guard anyway.
  */
 function browseOverride() {
     if (typeof BROWSE_ORDER !== "string") {
         return "";
     }
-    var chosen = BROWSE_ORDER.trim().toLowerCase();
-    return Object.prototype.hasOwnProperty.call(BROWSE_KEYWORDS, chosen) ? chosen : "";
+    var chosen = BROWSE_ORDER.trim();
+    if (!chosen) {
+        return "";
+    }
+    if (Object.prototype.hasOwnProperty.call(BROWSE_KEYWORDS, chosen.toLowerCase())) {
+        return chosen;
+    }
+    return CATEGORY_PREFIX.test(chosen) ? chosen : "";
 }
+
+/**
+ * The listing URL for a browse, or null when the query is an ordinary search.
+ *
+ * Two shapes, both the provider's own URLs and both one request:
+ *   ?filter=<sort>          the front-page sorts
+ *   /pmvideo/c/<slug>       a category listing, same card markup
+ */
+function listingUrl(query) {
+    var lower = query.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(BROWSE_KEYWORDS, lower)) {
+        return BASE_URL + "/?filter=" + encodeURIComponent(BROWSE_KEYWORDS[lower]);
+    }
+
+    var category = CATEGORY_PREFIX.exec(query);
+    if (category) {
+        // Slugs are lowercase, dash-separated; anything else is normalised to that
+        // shape rather than being pasted into the path raw.
+        var slug = category[1].toLowerCase().replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "");
+        if (slug) {
+            return BASE_URL + CATEGORY_PATH + slug;
+        }
+    }
+    return null;
+}
+
+/**
+ * One row per <article> card on a listing page.
+ *
+ * The card is the same shape on every listing the site renders — front-page sorts
+ * and category pages alike — so one parser covers all of them:
+ *
+ *   <article data-main-thumb="IMG" class="thumb-block …" data-post-id="N">
+ *     <a href="PAGE" title="TITLE">
+ *       <div class="post-thumbnail"> … <img class="video-main-thumb" src="IMG">
+ *       <span class="duration">37:00</span></div>
+ *       <header class="entry-header">
+ *         <span class="title">TITLE</span>
+ *         <div class="under-thumb"><span class="views">… 629K</span></div>
+ *
+ * The href is required and the title is required, because the host drops a search
+ * row missing any of title/image/href. The image is not: a card without a
+ * thumbnail yields "", which the host renders as a blank cell, and losing the row
+ * over a missing image is the worse trade (same rule as the REST path).
+ *
+ * No duration or view count is read. The host discards both — it takes only
+ * {title, image, href} — and the app renders the count itself.
+ */
+function parseCards(html) {
+    var rows = [];
+    var cardPattern = /<article\b([^>]*)>([\s\S]*?)<\/article>/gi;
+    var match;
+
+    while ((match = cardPattern.exec(html)) !== null) {
+        var attributes = match[1] || "";
+        var body = match[2] || "";
+
+        var link = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(body);
+        var href = link ? (link[1] !== undefined ? link[1] : link[2]) : "";
+        if (!href) {
+            continue;
+        }
+
+        var title = /<span\b[^>]*\bclass\s*=\s*"[^"]*\btitle\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i.exec(body);
+        if (!title) {
+            // The <a title="…"> attribute carries the same text; use it rather than
+            // dropping a card whose markup lost the span.
+            var attribute = /\btitle\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(body);
+            title = attribute ? [null, attribute[1] !== undefined ? attribute[1] : attribute[2]] : null;
+        }
+        if (!title) {
+            continue;
+        }
+        var name = decodeEntities(String(title[1]).replace(/<[^>]*>/g, "").trim());
+        if (!name) {
+            continue;
+        }
+
+        var image = attributeValue(attributes, "data-main-thumb") ||
+            attributeValue(body, "src");
+        // An absolute URL only: a root-relative one would need resolving, and
+        // JavaScriptCore has no URL global to do it with.
+        if (image && !/^https?:\/\//i.test(image)) {
+            image = "";
+        }
+
+        rows.push({ title: name, image: image, href: href });
+    }
+    return rows;
+}
+
+/** The value of a double- or single-quoted attribute, or "" when absent. */
+function attributeValue(html, name) {
+    var found = new RegExp("\\b" + name + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')", "i").exec(html);
+    return found ? (found[1] !== undefined ? found[1] : found[2]) : "";
+}
+
 
 // ---------------------------------------------------------------------------
 // Network
@@ -297,13 +410,17 @@ function metaContent(html, itemprop) {
  * upstream and inventing one would be a fabricated value (§31, §54). Losing the
  * whole result row over an absent thumbnail is the worse trade.
  *
- * A browse keyword (see BROWSE_KEYWORDS) skips the text search and returns the
- * provider's newest posts instead — the listing its own front page shows, in
- * the grid shape both apps render. Neither app can be made to show a landing
- * page: Sora has no home tab at all (ContentView.swift lists exactly Library,
- * Downloads, Settings, Search) and both hosts refuse to call a module with an
- * empty query (SearchView.swift:243, Luna SearchView.swift:506). A keyword the
- * user chooses is the only way in.
+ * Two kinds of query, and they return the same row shape:
+ *
+ *   browse  a sort keyword or "cat:slug", answered from the provider's own
+ *           listing page and parsed out of its post cards
+ *   search  anything else, answered from the WordPress REST API
+ *
+ * Neither app can be made to show a landing page: Sora has no home tab
+ * (ContentView.swift lists exactly Library, Downloads, Settings, Search) and
+ * both hosts refuse to call a module with an empty query (SearchView.swift:243).
+ * A keyword the user chooses, or the setting in the module's own settings
+ * screen, is the only way in.
  */
 function searchResults(keyword) {
     // A browse chosen in the module's settings screen overrides the typed text.
@@ -314,36 +431,32 @@ function searchResults(keyword) {
         return Promise.resolve("[]");
     }
 
-    // _embed=wp:featuredmedia rather than _embed=1. Plain _embed resolves every
-    // embeddable relation — author, terms, featured media — and this provider's
-    // server pays for each one as an internal sub-request. Naming the single
-    // relation the module actually reads returned byte-identical rows in a
-    // median 2.6 s against 7.1 s, so the other two relations were pure latency
-    // and load on someone else's server (§48, §49).
-    // hasOwnProperty, not a truthiness test: the newest-first entries hold
-    // undefined on purpose, and a bare property lookup would also match
-    // inherited names like "constructor" or "toString".
-    var browseKey = query.toLowerCase();
-    var isBrowse = Object.prototype.hasOwnProperty.call(BROWSE_KEYWORDS, browseKey);
-    var order = isBrowse ? BROWSE_KEYWORDS[browseKey] : undefined;
-
-    var url;
-    if (isBrowse) {
-        // No search parameter: there is no text to match against. orderby=date
-        // is WordPress's own default ordering, stated explicitly so the intent
-        // survives a future default change.
-        url = BASE_URL + SEARCH_ENDPOINT + "?per_page=" + SEARCH_LIMIT +
-            "&orderby=date&order=" + (order === "asc" ? "asc" : "desc") +
-            "&_embed=wp:featuredmedia";
-    } else {
-        url = BASE_URL + SEARCH_ENDPOINT + "?search=" + encodeURIComponent(query) +
-            "&per_page=" + SEARCH_LIMIT + "&_embed=wp:featuredmedia";
-    }
+    var browse = listingUrl(query);
+    var url = browse !== null ? browse :
+        // _embed=wp:featuredmedia rather than _embed=1. Plain _embed resolves every
+        // embeddable relation — author, terms, featured media — and this provider's
+        // server pays for each one as an internal sub-request. Naming the single
+        // relation the module actually reads returned byte-identical rows in a
+        // median 2.6 s against 7.1 s, so the other two relations were pure latency
+        // and load on someone else's server (§48, §49).
+        BASE_URL + SEARCH_ENDPOINT + "?search=" + encodeURIComponent(query) +
+        "&per_page=" + SEARCH_LIMIT + "&_embed=wp:featuredmedia";
 
     return get(url).then(function (result) {
         if (result.kind !== "ok") {
             console.log("pornmz search " + describe(result) + " for " + query);
             return "[]";
+        }
+
+        if (browse !== null) {
+            var cards = parseCards(result.body);
+            if (!cards.length) {
+                // A 200 carrying no cards means the listing markup changed, or the
+                // category slug does not exist. Saying so beats returning an empty
+                // grid that reads as "this site has nothing".
+                console.log("pornmz browse found no cards for " + query);
+            }
+            return JSON.stringify(cards);
         }
 
         var posts = parseJson(result.body);
