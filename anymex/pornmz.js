@@ -5,7 +5,7 @@ const mangayomiSources = [{
     "apiUrl": "",
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://pornmz.com",
     "typeSource": "single",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "itemType": 1,
@@ -329,7 +329,11 @@ class DefaultExtension extends MProvider {
             name: "Watch",
             url: page,
             scanlator: "",
-            dateUpload: this.uploadMillis(this.metaText(body, "uploadDate"))
+            // A *string* of milliseconds, not a number. The host declares the
+            // field String? and reads it back with int.tryParse, so a bare
+            // integer here is a hard type error on every detail page rather
+            // than a missing date. Every reference source stringifies it too.
+            dateUpload: String(this.uploadMillis(this.metaText(body, "uploadDate")))
         }];
 
         return {

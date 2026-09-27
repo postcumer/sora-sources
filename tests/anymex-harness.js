@@ -262,7 +262,20 @@ function hostParseList(result) {
     return {ok: true, items, dropped, hasNextPage: result.hasNextPage};
 }
 
-/** A detail object, as the host has to be able to use it. */
+/**
+ * A detail object, as the host has to be able to use it.
+ *
+ * This transcribes the declared field types of MManga and MChapter rather than
+ * spot-checking the ones that seemed interesting. That is deliberate: Dart
+ * assigns a `String?` field straight out of the decoded map, so a source that
+ * puts a number in one does not get a missing value, it gets a type error that
+ * takes down every detail page for that source. `dateUpload` was sent as a
+ * number once and did exactly that, in the field this check used to skip.
+ *
+ * The two exceptions are marked below where the real model is not a plain
+ * assignment. A field the model never reads is not checked; a field it reads
+ * with a cast is checked as the cast would see it.
+ */
 function hostParseDetail(detail) {
     if (!detail || typeof detail !== 'object') {
         return {ok: false, reason: 'not an object'};
@@ -283,12 +296,42 @@ function hostParseDetail(detail) {
         if (typeof chapter.url !== 'string' || !chapter.url) {
             return {ok: false, reason: 'a chapter with no url'};
         }
+        // MChapter declares dateUpload, scanlator, thumbnailUrl, description,
+        // downloadSize and duration all as String?, and assigns each directly.
+        for (const field of ['dateUpload', 'scanlator', 'thumbnailUrl', 'description', 'downloadSize', 'duration']) {
+            if (chapter[field] !== undefined && chapter[field] !== null && typeof chapter[field] !== 'string') {
+                return {
+                    ok: false,
+                    reason: 'chapter.' + field + ' is a ' + typeof chapter[field] + ', and the model declares it String?'
+                };
+            }
+        }
+        if (chapter.isFiller !== undefined && typeof chapter.isFiller !== 'boolean') {
+            return {ok: false, reason: 'chapter.isFiller is not a boolean'};
+        }
     }
     if (typeof detail.status !== 'number') {
         return {ok: false, reason: 'status is not a number'};
     }
     if (typeof detail.imageUrl !== 'string') {
         return {ok: false, reason: 'imageUrl is not a string'};
+    }
+    // MManga's remaining String? fields, assigned directly.
+    for (const field of ['link', 'description', 'author', 'artist']) {
+        if (detail[field] !== undefined && detail[field] !== null && typeof detail[field] !== 'string') {
+            return {
+                ok: false,
+                reason: field + ' is a ' + typeof detail[field] + ', and the model declares it String?'
+            };
+        }
+    }
+    // genre is (json['genre'] as List?)?.map((e) => e.toString()), so any element
+    // type is survivable — but a non-string element would be silently coerced,
+    // which is worth knowing rather than assuming.
+    for (const entry of detail.genre) {
+        if (typeof entry !== 'string') {
+            return {ok: false, reason: 'a genre entry is a ' + typeof entry + ', and would be coerced by the host'};
+        }
     }
     return {ok: true, detail};
 }
@@ -315,6 +358,39 @@ function hostParseVideos(videos) {
         }
         if (typeof video.quality !== 'string' || !video.quality) {
             return {ok: false, reason: 'a stream with no quality'};
+        }
+        // MVideo declares headers as Map<String, String>? and audios/subtitles
+        // as List<MTrack>?, whose file and label are both String?. A number in
+        // any of them is a type error in the constructor, not a dropped field —
+        // and the Referer in headers is the one value this provider cannot
+        // play without, so it is checked rather than assumed.
+        if (video.headers !== undefined && video.headers !== null) {
+            if (typeof video.headers !== 'object' || Array.isArray(video.headers)) {
+                return {ok: false, reason: 'headers is not an object'};
+            }
+            for (const name of Object.keys(video.headers)) {
+                if (typeof video.headers[name] !== 'string') {
+                    return {
+                        ok: false,
+                        reason: 'header ' + name + ' is a ' + typeof video.headers[name] + ', and the model declares Map<String, String>'
+                    };
+                }
+            }
+        }
+        for (const list of ['audios', 'subtitles']) {
+            if (video[list] === undefined || video[list] === null) {
+                continue;
+            }
+            if (!Array.isArray(video[list])) {
+                return {ok: false, reason: list + ' is not an array'};
+            }
+            for (const track of video[list]) {
+                for (const field of ['file', 'label']) {
+                    if (track[field] !== undefined && track[field] !== null && typeof track[field] !== 'string') {
+                        return {ok: false, reason: list + ' track ' + field + ' is a ' + typeof track[field]};
+                    }
+                }
+            }
         }
         items.push(video);
     }

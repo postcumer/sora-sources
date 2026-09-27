@@ -40,7 +40,7 @@ is to add a source directly and paste its code:
    | Lang | `en` |
    | Icon URL | `https://www.google.com/s2/favicons?sz=128&domain=https://pornmz.com` |
    | Type | single |
-   | Version | `1.0.1` |
+   | Version | `1.0.2` |
    | Is anime | yes (not manga) |
    | NSFW | yes |
    | ApiUrl | leave empty |
@@ -320,6 +320,22 @@ And two that are ours rather than the provider's:
 | The repository or branch is renamed | The catalogue 404s and no source is offered | `sourceCodeUrl` in `index.json` |
 | `version` is not bumped | An update is never delivered to anyone who already has the source | both `index.json` and the `mangayomiSources` block — the test compares them |
 | The source is renamed | The derived id changes, so it installs as a second source | the `id` in `index.json` — the test re-derives it |
+| A number lands in a `String?` field | **Every detail page for that source throws** and shows a stack trace | see below — this happened once, at `dateUpload` |
+
+### The `String?` trap
+
+Dart assigns a `String?` field straight out of the decoded map, so putting a number in one is
+not a missing value — it is a type error that takes down the whole screen. `MChapter.dateUpload`
+is declared `String?` and read back with `int.tryParse`, so the value has to be a **stringified**
+millisecond count, which is what every reference source sends. It shipped here as a bare number
+once, and the symptom was `'int' is not a subtype of type 'String?'` on every single detail page
+while search and the listings worked perfectly.
+
+`hostParseDetail` in `../tests/anymex-harness.js` now transcribes the declared types of `MManga`
+and `MChapter` field by field rather than spot-checking a few, and `hostParseVideos` does the
+same for `MVideo`'s `headers` (`Map<String, String>?`) and its audio and subtitle tracks. That
+harness check is what was missing, and it is the reason the bug reached a device.
+
 
 
 Browsing parses a **theme**, not an API contract, so theme markup can change in ways an API

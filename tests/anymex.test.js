@@ -294,13 +294,19 @@ test('getDetail: one post is one chapter', async () => {
     test.equal(parsed.detail.status, 1, 'a published video is complete');
 });
 
-test('getDetail: the chapter carries a real upload date', async () => {
+test('getDetail: the chapter carries a real upload date, as a string', async () => {
+    // The host declares dateUpload String? and reads it with int.tryParse, so a
+    // bare number is a type error on every detail page, not a missing date. It
+    // used to be sent as a number and took the whole screen down.
     const ctx = load();
     const parsed = h.hostParseDetail(await ctx.instance.getDetail(PAGE_URL));
+    test.true(parsed.ok, parsed.reason);
     const when = parsed.detail.chapters[0].dateUpload;
-    test.equal(typeof when, 'number', 'milliseconds since the epoch');
-    test.ok(when > 1500000000000, 'a plausible date, not zero');
-    const asDate = new Date(when).toISOString().slice(0, 10);
+    test.equal(typeof when, 'string', 'a string, as the model declares');
+    test.equal(/^\d+$/.test(when), true, 'digits the host can int.tryParse');
+    const millis = Number(when);
+    test.ok(millis > 1500000000000, 'a plausible date, not zero');
+    const asDate = new Date(millis).toISOString().slice(0, 10);
     test.equal(asDate, '2026-09-26', 'the UTC offset in the page is applied');
 });
 
