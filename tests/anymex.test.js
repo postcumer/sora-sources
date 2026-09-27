@@ -511,6 +511,64 @@ test('contract: logs never carry a response body', async () => {
     test.equal(logged.indexOf(secret), -1, 'the body is not in the log');
 });
 
+// --- platform portability ---------------------------------------------------
+
+/*
+ * The same source has to run on Android and on iOS, and those are the same
+ * codebase with the same QuickJS engine, so there is no port to write. What is
+ * easy to lose is the property itself: an edit that reaches for a Node or DOM
+ * global would pass every other test here and then fail only on a device,
+ * because the harness supplies nothing that is missing at runtime.
+ *
+ * So the banned list is the useful half of this group — the globals that exist
+ * in Node or a browser, that a developer would reach for without thinking, and
+ * that the engine does not have.
+ */
+const NOT_PORTABLE = [
+    [/\bnew\s+URL\s*\(/, 'the URL constructor'],
+    [/\bfetch\s*\(/, 'fetch()'],
+    [/\bXMLHttpRequest\b/, 'XMLHttpRequest'],
+    [/\bText(?:En|De)coder\b/, 'TextEncoder/TextDecoder'],
+    [/\bBuffer\b/, 'Buffer'],
+    [/\brequire\s*\(/, 'require()'],
+    [/\bprocess\./, 'process'],
+    [/\b__dirname\b/, '__dirname'],
+    [/\bset(?:Timeout|Interval)\s*\(/, 'setTimeout/setInterval'],
+    [/\batob\s*\(|\bbtoa\s*\(/, 'atob/btoa'],
+    [/\bcrypto\./, 'crypto'],
+    [/\bglobalThis\b/, 'globalThis'],
+    [/\bnavigator\b/, 'navigator'],
+    [/\bdocument\b/, 'document'],
+    [/\bwindow\b/, 'window'],
+    [/\blocalStorage\b/, 'localStorage']
+];
+
+test('portability: no global the engine does not provide', () => {
+    const code = sourceCode();
+    for (const [pattern, name] of NOT_PORTABLE) {
+        test.equal(pattern.test(code), false, 'does not use ' + name);
+    }
+});
+
+test('portability: the network is reached only through the injected Client', () => {
+    const code = sourceCode();
+    // One way out, so a platform-specific networking path cannot creep in beside
+    // it. `Client` is a host object on every platform: the app's bridge is
+    // built on dart:io, not on a platform plugin, which is why a source that
+    // only uses it needs no per-platform variant.
+    const routes = code.match(/new\s+Client\s*\(\s*\)/g) || [];
+    test.equal(routes.length > 0, true, 'it fetches through new Client()');
+    test.equal(/new\s+Client\s*\(\s*\)[\s\S]{0,200}?\.get\s*\(/.test(code), true, 'and calls get() on it');
+});
+
+test('portability: every URL it builds is https', () => {
+    // iOS refuses plaintext HTTP outright under ATS, so a stray http:// would
+    // work in the harness and fail on device with no useful error.
+    const code = sourceCode();
+    const insecure = code.match(/http:\/\/(?!localhost)/g) || [];
+    test.equal(insecure.length, 0, 'no plaintext http URL in the code');
+});
+
 // --- the install catalogue -------------------------------------------------
 
 const CATALOGUE = path.join(__dirname, '..', 'anymex', 'index.json');

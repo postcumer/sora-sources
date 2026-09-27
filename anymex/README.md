@@ -85,6 +85,56 @@ convention here, not a guarantee — so a mismatch is not a load failure, and th
 value rather than trying to agree with everyone else's.
 
 
+## iOS
+
+**This source is already the iOS source.** There is no separate file, and adding one would be a
+mistake rather than an improvement — see below.
+
+Mangayomi is one codebase for Android, iOS, macOS, Linux and Windows, and the extension
+contract is identical on all of them. Checked in the app's own source rather than assumed:
+
+| Question | Answer | Where |
+|---|---|---|
+| Does the JavaScript engine build for iOS? | Yes — an Objective-C and a Swift plugin | `flutter_qjs/ios/Classes/` |
+| Is JavaScript gated off on iOS? | No — the runtime is chosen by `sourceCodeLanguage` alone | `lib/eval/lib.dart` |
+| Does the HTTP bridge work on iOS? | Yes — it is `dart:io` and `MClient`, not a platform plugin | `lib/eval/javascript/http.dart` |
+| Do per-stream `headers` reach the player? | Yes — they become media_kit's `httpHeaders`, i.e. mpv's header fields | `anime_player_view.dart` |
+| Are the URLs App Transport Security clean? | Yes — every one is `https` | this source |
+
+The last row is why the Referer fix travels: `video.twimg.com` is a third-party CDN, it rejects
+a referer from the provider's own domain with a 403, and the stream therefore carries one
+derived from the playlist URL's origin. On iOS a missing referer is not a soft failure the way
+it is on Android — AVFoundation simply refuses the request — so this matters more there, not
+less.
+
+**Why there is deliberately no `pornmz-ios.js`.** A second file would be a different source, not
+a variant of one. The catalogue's `id` is derived from the source's `lang` and `name`, so a
+renamed copy gets a different id, the app has no way to tell it is the same provider, and the
+user ends up with two entries for one site — each with its own history, its own library and its
+own settings. The iOS build shares the id, so the app recognises it as the source already
+installed and updates it in place.
+
+**Installing on iOS.** Sideload the app first; it is not on the App Store. The project's own
+README lists AltStore, SideStore and Feather, and notes that only releases after 0.5.2 are
+signed. Then install the source exactly as on any other platform — the repository URL is the
+same:
+
+```
+https://raw.githubusercontent.com/postcumer/sora-sources/main/anymex/index.json
+```
+
+**If it works on Android and not on iOS**, the source is almost certainly not the cause. The
+three things that differ are the app build, the sideload's signing, and the player, and the
+first two are host-side. A source that loads and lists items is working; a source that lists but
+plays nothing is a header or codec question, and the log in the app's extension detail screen
+says which.
+
+The `portability` tests in `../tests/anymex.test.js` exist to keep this true. The engine has no
+`URL`, no `fetch`, no `TextDecoder`, no `Buffer` and no timers, and the harness supplies nothing
+that is missing at runtime — so an edit that reached for one would pass every other test here and
+then fail only on a device. Those tests ban the globals an edit would plausibly reach for, and
+one asserts the network is touched only through the injected `Client`.
+
 ## What it does
 
 | | |
