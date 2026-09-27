@@ -1,0 +1,6 @@
+# macOS
+.DS_Store
+
+# Nothing else is ignored: this project has no dependencies and no build step.
+# The modules/ and tests/ trees are the deliverable and must be published raw —
+# Sora fetches module.js by URL, so it cannot be generated at publish time.

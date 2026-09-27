@@ -1,0 +1,17 @@
+{
+  "sourceName": "pornmz",
+  "author": {
+    "name": "sora-modules",
+    "icon": "https://pornmz.com/wp-content/uploads/2026/09/Wifey-Mayalynn-and-Mrjax-Tattooed-Baddie-Hotwife-Loves-BBC-pornmz-640x360.jpg"
+  },
+  "iconUrl": "https://pornmz.com/wp-content/uploads/2026/09/Wifey-Mayalynn-and-Mrjax-Tattooed-Baddie-Hotwife-Loves-BBC-pornmz.jpg",
+  "version": "1.0.0",
+  "language": "en",
+  "baseUrl": "https://pornmz.com",
+  "streamType": "hls",
+  "quality": "Up to 1080p",
+  "searchBaseUrl": "https://pornmz.com/wp-json/wp/v2/posts?search=%s",
+  "scriptUrl": "https://raw.githubusercontent.com/cranci1/Sora-Modules/main/modules/pornmz/module.js",
+  "asyncJS": true,
+  "streamAsyncJS": true
+}
